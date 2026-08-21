@@ -36,14 +36,16 @@ static void stop_portal_task(void *context)
 {
     (void)context;
     vTaskDelay(pdMS_TO_TICKS(15000));
-    if (s_portal_active) {
+    bool connected = false;
+    app_state_get_wifi(&connected, NULL, 0, NULL, 0);
+    if (s_portal_active && connected) {
         dns_server_stop(s_dns);
         s_dns = NULL;
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_mode(WIFI_MODE_STA));
         s_portal_active = false;
-        s_stop_scheduled = false;
         ESP_LOGI(TAG, "setup access point stopped; configuration remains at espresso.local");
     }
+    s_stop_scheduled = false;
     vTaskDelete(NULL);
 }
 
@@ -208,6 +210,8 @@ esp_err_t wifi_manager_connect(const char *ssid, const char *password)
 
     s_has_credentials = true;
     s_retry_count = 0;
+    /* Keep the named captive portal available while new credentials are tried. */
+    start_portal();
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "APSTA mode failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &config), TAG, "credentials failed");
     bool connected = false;

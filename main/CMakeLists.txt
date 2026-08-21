@@ -3,6 +3,8 @@ idf_component_register(
         "app_main.c"
         "app_state.c"
         "dns_server.c"
+        "improv_serial.c"
+        "improv_serial_codec.c"
         "ipp_codec.c"
         "ipp_proxy.c"
         "ipp_proxy_core.c"
@@ -24,6 +26,7 @@ idf_component_register(
         esp_https_ota
         esp_netif
         esp_wifi
+        esp_driver_uart
         json
         lwip
         mdns

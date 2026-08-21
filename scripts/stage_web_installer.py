@@ -152,6 +152,7 @@ def main() -> None:
         "name": "ESPresso",
         "version": version,
         "new_install_prompt_erase": True,
+        "new_install_improv_wait_time": 15,
         "builds": manifest_builds,
     }
     (args.output_dir / "manifest.json").write_text(

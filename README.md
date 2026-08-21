@@ -30,6 +30,7 @@ document bytes to the printer.
 
 - ESP32, ESP32-S2, and ESP32-S3 firmware built from one source tree with ESP-IDF 5.4
 - first-boot `ESPresso-XXXX` SoftAP and captive portal, with a four-character build identity shared by the firmware and web installer
+- post-flash [Improv Serial](https://www.improv-wifi.com/serial/) Wi-Fi provisioning over the same USB/UART connection
 - DNS funnel plus DHCP captive-portal URL (Option 114)
 - Wi-Fi scan, credential persistence, reconnect, and setup fallback
 - `espresso.local` configuration UI
@@ -66,13 +67,16 @@ The `main` workflow publishes this browser flasher to GitHub Pages. On a fresh b
 
 1. Open the [ESPresso web installer](https://krydix.github.io/ESPresso/) in desktop Chrome or Edge and connect an ESP32, ESP32-S2, or ESP32-S3 over USB. The installer detects the chip and selects its matching build automatically.
 2. Install ESPresso and wait for the board to restart.
-3. Join the open `ESPresso-XXXX` Wi-Fi network from a phone or laptop (or scan the matching Wi-Fi QR shown by the web installer).
-4. Use the captive portal to select the normal Wi-Fi network.
-5. Rejoin that network and open [http://espresso.local](http://espresso.local).
+3. Keep USB connected and let the installer send the normal Wi-Fi credentials over
+   Improv Serial. It will offer the device's local configuration URL after connecting.
+4. Alternatively, join the open `ESPresso-XXXX` Wi-Fi network from a phone or laptop
+   (or scan the matching Wi-Fi QR) and use the captive portal to select the network.
+5. Open [http://espresso.local](http://espresso.local).
 6. Scan for and select the legacy AirPrint printer.
 
-The setup AP closes 15 seconds after ESPresso joins Wi-Fi. Configuration remains
-available at `espresso.local`.
+The setup AP remains available as a fallback and closes 15 seconds after ESPresso
+joins Wi-Fi through either provisioning path. Configuration remains available at
+`espresso.local`.
 
 ## Update firmware
 

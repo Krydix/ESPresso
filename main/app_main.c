@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include "improv_serial.h"
 #include "ipp_proxy.h"
 #include "ota_update.h"
 #include "printer_discovery.h"
@@ -28,6 +29,7 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(web_server_start());
     ESP_ERROR_CHECK(wifi_manager_start());
+    ESP_ERROR_CHECK(improv_serial_start());
     ESP_ERROR_CHECK(printer_discovery_init());
     ESP_ERROR_CHECK(ipp_proxy_start());
 

@@ -45,13 +45,13 @@
       <h2 class="section-title" id="installHeading">Install</h2>
       <div class="group"><div class="install">
         <h2>Ready when your ESP32 is.</h2>
-        <p>Flashing replaces the board’s existing firmware. Your browser will ask you to approve its serial connection.</p>
+        <p>Flashing replaces the board’s existing firmware. Keep USB connected to configure Wi‑Fi immediately afterward.</p>
         <esp-web-install-button manifest="./manifest.json">
           <button class="button-shell" slot="activate" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>Install ESPresso</button>
           <span slot="unsupported" class="support">Open this page in desktop Chrome or Edge to install over USB.</span>
           <span slot="not-allowed" class="support">Web Serial requires HTTPS or localhost.</span>
         </esp-web-install-button>
-        <p class="install-note">Keep this page open. Your setup QR appears when installation finishes.</p>
+        <p class="install-note">After installation, use serial Wi‑Fi setup or scan the fallback access-point QR.</p>
       </div></div>
     </section>
 
@@ -59,8 +59,8 @@
       <h2 class="section-title" id="nextHeading">What Happens Next</h2>
       <div class="group">
         <div class="row"><span class="step-number">1</span><span class="copy"><span class="label">Flash ESPresso</span><span class="detail">Choose your connected board; its chip is detected automatically</span></span><span class="chevron"></span></div>
-        <div class="row"><span class="step-number">2</span><span class="copy"><span class="label">Scan the Wi‑Fi QR</span><span class="detail">Join the matching ESPresso setup network</span></span><span class="chevron"></span></div>
-        <div class="row"><span class="step-number">3</span><span class="copy"><span class="label">Choose Wi‑Fi and Printer</span><span class="detail">The captive portal guides the remaining setup</span></span><span class="chevron"></span></div>
+        <div class="row"><span class="step-number">2</span><span class="copy"><span class="label">Connect to Wi‑Fi</span><span class="detail">Configure over USB, or scan the ESPresso setup-network QR</span></span><span class="chevron"></span></div>
+        <div class="row"><span class="step-number">3</span><span class="copy"><span class="label">Choose a Printer</span><span class="detail">Open the local settings page and select the legacy printer</span></span><span class="chevron"></span></div>
       </div>
       <p class="note">Once ESPresso has joined your network, open <a href="http://espresso.local">espresso.local</a> to return to its settings.</p>
     </section>

@@ -74,6 +74,12 @@ test:
 	@mkdir -p "$(BUILD_DIR)/host-tests"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/improv_serial_codec.c" \
+		"$(ROOT_DIR)/tests/test_improv_serial_codec.c" \
+		-o "$(BUILD_DIR)/host-tests/test_improv_serial_codec"
+	@"$(BUILD_DIR)/host-tests/test_improv_serial_codec"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-I"$(ROOT_DIR)/main" \
 		"$(ROOT_DIR)/main/ipp_codec.c" \
 		"$(ROOT_DIR)/tests/test_ipp_codec.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_codec"
@@ -125,6 +131,13 @@ test-compat:
 
 test-sanitize:
 	@mkdir -p "$(BUILD_DIR)/host-tests"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/improv_serial_codec.c" \
+		"$(ROOT_DIR)/tests/test_improv_serial_codec.c" \
+		-o "$(BUILD_DIR)/host-tests/test_improv_serial_codec_sanitize"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_improv_serial_codec_sanitize"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		-I"$(ROOT_DIR)/main" \

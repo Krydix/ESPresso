@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -62,13 +63,19 @@ def main() -> None:
     )
 
     try:
-        version = subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        version = "unknown"
+        project_description = json.loads(
+            (args.build_dir / "project_description.json").read_text(encoding="utf-8")
+        )
+        version = project_description["project_version"]
+    except (OSError, KeyError, json.JSONDecodeError):
+        try:
+            version = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            version = "unknown"
     build_info = {
         "project": "ESPresso",
         "version": version,
@@ -76,6 +83,15 @@ def main() -> None:
         "chipFamily": "ESP32-S3",
         "setupSsid": setup_ssid,
     }
+    app_file = flash_args.get("app", {}).get("file")
+    if app_file:
+        app_source = args.build_dir / app_file
+        app_destination = app_file.replace("/", "-")
+        build_info["ota"] = {
+            "path": f"./firmware/{app_destination}",
+            "size": app_source.stat().st_size,
+            "sha256": hashlib.sha256(app_source.read_bytes()).hexdigest(),
+        }
     (args.output_dir / "build-info.json").write_text(
         json.dumps(build_info, indent=2) + "\n", encoding="utf-8"
     )

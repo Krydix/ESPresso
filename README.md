@@ -47,6 +47,8 @@ document bytes to the printer.
 - printer/job URI rewriting in both directions
 - GitHub Actions firmware build, downloadable artifacts, and GitHub Pages deployment
 - ESP Web Tools installer manifest generated from ESP-IDF's own `flasher_args.json`
+- dual-slot OTA updates from the settings UI, using either the published GitHub Pages
+  app image over verified HTTPS or a streamed custom `.bin` upload
 
 ## Install and onboard
 
@@ -63,6 +65,25 @@ The `main` workflow publishes this browser flasher to GitHub Pages. On a fresh b
 
 The setup AP closes 15 seconds after ESPresso joins Wi-Fi. Configuration remains
 available at `espresso.local`.
+
+## Update firmware
+
+Open `http://espresso.local` and use **Firmware Update**. **Download and Install**
+pulls the current app image directly from the ESPresso GitHub Pages deployment over
+certificate-verified HTTPS. **Upload and Install** accepts a custom ESP32-S3 app
+binary and streams it to the device without buffering the whole file in memory.
+
+Both methods write the inactive app slot, validate the completed ESP image, switch
+the boot slot, and then restart. If the updated app cannot complete its startup
+checks, the bootloader rolls back to the previous slot. NVS-backed Wi-Fi and printer
+settings are preserved.
+The maximum custom image size is shown by the device API and is currently 1,900,544
+bytes.
+
+> [!IMPORTANT]
+> Builds installed before dual-slot OTA support used a factory-only partition table.
+> Those boards need one USB installation from the web installer to adopt the OTA
+> partition map. Future app updates can then be installed over Wi-Fi.
 
 ## Build locally
 
@@ -86,6 +107,7 @@ main/
   wifi_manager.c        station reconnect + captive-portal SoftAP
   dns_server.c          setup-only wildcard DNS responder
   web_server.c          embedded setup/config UI and JSON API
+  ota_update.c          streamed upload + certificate-verified GitHub Pages OTA
   printer_discovery.c   legacy printer discovery + AirPrint advertisement
   printer_capabilities.c CUPS-style active IPP probing with 1.1 fallback
   printer_identity.c    stable bridge identity distinct from the old printer
@@ -123,7 +145,7 @@ unchanged, but Apple Raster remains mandatory for this first target.
 
 Not implemented: IPPS/TLS, PWG/Apple Raster conversion, PDF rendering, USB printers,
 PCL/PostScript drivers, PPD processing, filters, subscriptions implemented by ESPresso,
-spooling, a signed compatibility database, or OTA updates. ESPresso can derive basic
+spooling, or a signed compatibility database. ESPresso can derive basic
 media-size collections from PWG self-describing names, but margins, sources, finishings,
 and live printer/job state remain the old printer's responsibility.
 

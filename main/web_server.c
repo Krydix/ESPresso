@@ -9,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "ota_update.h"
 #include "printer_discovery.h"
 #include "wifi_manager.h"
 
@@ -30,6 +31,13 @@ static esp_err_t send_json(httpd_req_t *request, cJSON *json)
     esp_err_t err = httpd_resp_sendstr(request, serialized);
     free(serialized);
     return err;
+}
+
+static esp_err_t send_conflict(httpd_req_t *request, const char *message)
+{
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain; charset=utf-8");
+    return httpd_resp_sendstr(request, message);
 }
 
 static char *read_body(httpd_req_t *request, size_t maximum)
@@ -94,6 +102,19 @@ static esp_err_t status_handler(httpd_req_t *request)
     const esp_app_desc_t *description = esp_app_get_description();
     cJSON_AddStringToObject(root, "version", description->version);
     cJSON_AddBoolToObject(root, "ready", connected && selected);
+
+    ota_update_status_t update_status;
+    ota_update_get_status(&update_status);
+    cJSON *update = cJSON_AddObjectToObject(root, "update");
+    cJSON_AddStringToObject(update, "state", update_status.state);
+    cJSON_AddStringToObject(update, "message", update_status.message);
+    cJSON_AddStringToObject(update, "nextVersion", update_status.next_version);
+    cJSON_AddNumberToObject(update, "bytesWritten", update_status.bytes_written);
+    cJSON_AddNumberToObject(update, "totalBytes", update_status.total_bytes);
+    cJSON_AddNumberToObject(update, "maximumSize", update_status.partition_size);
+    cJSON_AddBoolToObject(update, "active", update_status.active);
+    cJSON_AddBoolToObject(update, "restartPending", update_status.restart_pending);
+    cJSON_AddStringToObject(update, "githubUrl", ota_update_github_url());
     return send_json(request, root);
 }
 
@@ -228,6 +249,87 @@ static esp_err_t printer_clear_handler(httpd_req_t *request)
     return httpd_resp_sendstr(request, "{\"selected\":false}");
 }
 
+static esp_err_t update_upload_handler(httpd_req_t *request)
+{
+    if (request->content_len <= 0) {
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "Choose a non-empty ESP32 app firmware binary");
+    }
+    esp_err_t error = ota_update_begin_upload((size_t)request->content_len);
+    if (error == ESP_ERR_INVALID_STATE) {
+        return send_conflict(request, "Another update is already running");
+    }
+    if (error == ESP_ERR_INVALID_SIZE) {
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "Firmware is larger than the OTA app slot");
+    }
+    if (error != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not prepare the OTA app slot");
+    }
+
+    uint8_t *buffer = malloc(4096);
+    if (!buffer) {
+        ota_update_abort_upload("Not enough memory to receive firmware");
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Not enough memory to receive firmware");
+    }
+    size_t remaining = (size_t)request->content_len;
+    while (remaining > 0) {
+        size_t wanted = remaining < 4096 ? remaining : 4096;
+        int received = httpd_req_recv(request, (char *)buffer, wanted);
+        if (received == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (received <= 0) {
+            free(buffer);
+            ota_update_abort_upload("Firmware upload was interrupted");
+            return ESP_FAIL;
+        }
+        error = ota_update_write(buffer, (size_t)received);
+        if (error != ESP_OK) {
+            free(buffer);
+            ota_update_abort_upload("Could not write firmware to flash");
+            return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                       "Could not write firmware to flash");
+        }
+        remaining -= (size_t)received;
+    }
+    free(buffer);
+
+    error = ota_update_finish_upload();
+    if (error != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "The upload is not a valid ESP32-S3 app firmware image");
+    }
+    ota_update_status_t status;
+    ota_update_get_status(&status);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "installed", true);
+    cJSON_AddBoolToObject(response, "restarting", true);
+    cJSON_AddStringToObject(response, "version", status.next_version);
+    error = ota_update_schedule_restart();
+    esp_err_t send_error = send_json(request, response);
+    return error == ESP_OK ? send_error : error;
+}
+
+static esp_err_t update_github_handler(httpd_req_t *request)
+{
+    esp_err_t error = ota_update_start_github();
+    if (error == ESP_ERR_INVALID_STATE) {
+        return send_conflict(request, "Another update is already running");
+    }
+    if (error != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not start the GitHub update");
+    }
+    httpd_resp_set_status(request, "202 Accepted");
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "started", true);
+    cJSON_AddStringToObject(response, "source", ota_update_github_url());
+    return send_json(request, response);
+}
+
 static esp_err_t not_found_handler(httpd_req_t *request, httpd_err_code_t error)
 {
     (void)error;
@@ -243,8 +345,10 @@ esp_err_t web_server_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 6;
+    config.max_uri_handlers = 12;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
+    config.recv_wait_timeout = 30;
     httpd_handle_t server = NULL;
     ESP_RETURN_ON_ERROR(httpd_start(&server, &config), TAG, "web server failed");
 
@@ -257,6 +361,8 @@ esp_err_t web_server_start(void)
         {.uri = "/api/printers", .method = HTTP_GET, .handler = printers_handler},
         {.uri = "/api/printer", .method = HTTP_POST, .handler = printer_select_handler},
         {.uri = "/api/printer", .method = HTTP_DELETE, .handler = printer_clear_handler},
+        {.uri = "/api/update/upload", .method = HTTP_POST, .handler = update_upload_handler},
+        {.uri = "/api/update/github", .method = HTTP_POST, .handler = update_github_handler},
     };
     for (size_t i = 0; i < sizeof(handlers) / sizeof(handlers[0]); ++i) {
         ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &handlers[i]), TAG,

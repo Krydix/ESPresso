@@ -5,6 +5,7 @@ idf_component_register(
         "dns_server.c"
         "ipp_codec.c"
         "ipp_proxy.c"
+        "ota_update.c"
         "printer_capabilities.c"
         "printer_discovery.c"
         "printer_identity.c"
@@ -12,15 +13,18 @@ idf_component_register(
         "wifi_manager.c"
     INCLUDE_DIRS "."
     REQUIRES
+        app_update
         esp_event
         esp_app_format
         esp_http_client
         esp_http_server
+        esp_https_ota
         esp_netif
         esp_wifi
         json
         lwip
         mdns
+        mbedtls
         nvs_flash
     EMBED_FILES "../frontend/index.html"
 )

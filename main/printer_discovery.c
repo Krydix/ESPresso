@@ -331,4 +331,5 @@ void printer_discovery_network_ready(void)
         return;
     }
     refresh_saved_address();
+    ESP_ERROR_CHECK_WITHOUT_ABORT(printer_discovery_advertise_selected());
 }

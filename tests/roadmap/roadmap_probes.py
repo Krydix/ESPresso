@@ -85,7 +85,7 @@ def main() -> None:
         threading.Thread(target=proxy.serve_forever, daemon=True).start()
         probes = [
             ("incoming-chunked-http",
-             lambda: chunked_request_is_supported(request_message([])), False),
+             lambda: chunked_request_is_supported(request_message([])), True),
             ("requested-attribute-groups", requested_group_is_supported, True),
             ("format-specific-capabilities", conditional_profiles_are_supported,
              True),

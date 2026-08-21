@@ -1,0 +1,12 @@
+{
+  NAME "Modern print-color-mode translates to legacy output-mode"
+  OPERATION Validate-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR mimeMediaType document-format image/urf
+  GROUP job-attributes-tag
+  ATTR keyword print-color-mode color
+  STATUS successful-ok
+}

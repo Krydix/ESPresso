@@ -18,12 +18,44 @@ using ESP-IDF for the actual network transport.
 | Advertise `_ipp._tcp,_universal` using real capabilities | ESP-IDF mDNS service and TXT record |
 | Present a modern queue identity | ESP-specific UUID, URI and IPP 1.1/2.0 facade |
 | Relay printer and job operations | Safe operation allowlist, validation, IPP errors, and version/URI translation |
-| Relay document data | Unchanged 4 KiB streaming path with host-tested short-read/short-write handling |
+| Relay document data | Unchanged 4 KiB streaming path with host-tested Content-Length and chunked framing plus short-I/O handling |
 | Track live state | Refresh state and accepting-jobs metadata from capability responses |
 
 Request policy, streaming, and DNS-SD TXT generation are platform-neutral C modules.
 The firmware and host CUPS lab compile the same implementations, preventing the test
 facade from drifting into a second interpretation of the protocol.
+
+ESP-IDF's standard HTTP server does not accept chunked request bodies, so the IPP
+endpoint on port 631 uses a small dedicated socket parser. It rejects ambiguous
+Content-Length/Transfer-Encoding framing, decodes extensions and bounded trailers,
+and re-chunks document jobs toward the legacy printer without buffering the document.
+Non-document operations remain bounded by the 64 KiB attribute-envelope limit.
+This streaming translation necessarily requires the legacy HTTP/1.1 endpoint to accept
+chunked uploads; a target that requires Content-Length would need document spooling,
+which ESPresso deliberately does not advertise or attempt.
+
+### Upstream chunking edge case
+
+IPP/1.1 requires an HTTP server to accept chunked IPP requests, so a real AirPrint
+printer should accept ESPresso's streamed upload. Some non-conforming embedded HTTP
+stacks can nevertheless accept a fixed-length request and reject an otherwise identical
+chunked request. ESPresso cannot recover transparently: it cannot produce a truthful
+`Content-Length` until it has stored the complete document, and persistent spooling is
+outside the bounded relay architecture.
+
+Test a selected legacy printer safely with its real IPP URI and the CUPS query fixture:
+
+```sh
+ipptool -tv -C ipp://printer.local/ipp/print \
+  /usr/share/cups/ipptool/get-printer-attributes.test
+ipptool -tv -L ipp://printer.local/ipp/print \
+  /usr/share/cups/ipptool/get-printer-attributes.test
+```
+
+If the fixed-length `-L` request succeeds while the default chunked `-C` request fails,
+that printer needs a spooling bridge rather than ESPresso's streaming path. A successful
+small query is strong parser evidence, although only a real document job fully validates
+the printer's upload path.
 
 The selected profile is persisted in NVS. Its schema is versioned so firmware updates
 discard incompatible cached records instead of interpreting an old C structure.
@@ -46,6 +78,8 @@ For successful `Get-Printer-Attributes` responses ESPresso can safely own and no
   printer resolutions derived from URF `RS` values;
 - mandatory charset/language, printer information, uptime, queue-count and PDL
   behavior metadata missing from some legacy responses;
+- conservative IPP 2.0 defaults for no finishings, portrait orientation,
+  face-down output, normal quality, one-sided printing and unknown speed;
 - conservative `compression-supported=none` and
   `multiple-document-jobs-supported=false` values.
 
@@ -56,10 +90,14 @@ defined sets; exact names, unions, duplicate values, unknown selectors and `all`
 handled without dropping required operation attributes or splitting collections.
 As in CUPS, `media-col-database` is excluded from implicit/`all` and group requests
 unless the client explicitly names it, avoiding an unexpectedly large capability
-response. Upstream defaults remain relayed rather than fabricated.
+response. Upstream values remain authoritative when they exist. Facade-owned neutral
+defaults are removed before relay when the legacy printer did not advertise the
+matching Job Template attribute; non-neutral values are rejected locally. Modern
+`print-color-mode` is translated back to legacy `output-mode` for printers exposing
+only the older spelling.
 The classifier distinguishes Printer Description, Job Description and Job Template
-attributes so it can also be reused when job-response filtering is added. The first
-two operation attributes are validated in their RFC-required charset/language order.
+attributes and filters both printer and job query responses. The first two operation
+attributes are validated in their RFC-required charset/language order.
 
 Jobs, unrecognized media collections, margins, finishings and vendor attributes are
 forwarded from the old printer. Live state is forwarded and cached for DNS-SD/UI use;

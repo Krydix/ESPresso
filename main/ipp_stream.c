@@ -1,5 +1,6 @@
 #include "ipp_stream.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 
 ipp_stream_result_t ipp_stream_write_all(ipp_stream_write_fn writer,
@@ -16,6 +17,29 @@ ipp_stream_result_t ipp_stream_write_all(ipp_stream_write_fn writer,
             return IPP_STREAM_WRITE_ERROR;
         }
         sent += (size_t)result;
+    }
+    return IPP_STREAM_OK;
+}
+
+ipp_stream_result_t ipp_stream_write_http_chunk(ipp_stream_write_fn writer,
+                                                void *writer_context,
+                                                const uint8_t *data,
+                                                size_t length)
+{
+    if (!writer || (!data && length)) {
+        return IPP_STREAM_WRITE_ERROR;
+    }
+    char header[2 * sizeof(size_t) + 3];
+    int header_length = snprintf(header, sizeof(header), "%zx\r\n", length);
+    if (header_length < 0 || (size_t)header_length >= sizeof(header) ||
+        ipp_stream_write_all(writer, writer_context,
+                             (const uint8_t *)header,
+                             (size_t)header_length) != IPP_STREAM_OK ||
+        (length && ipp_stream_write_all(writer, writer_context, data, length) !=
+                       IPP_STREAM_OK) ||
+        ipp_stream_write_all(writer, writer_context,
+                             (const uint8_t *)"\r\n", 2) != IPP_STREAM_OK) {
+        return IPP_STREAM_WRITE_ERROR;
     }
     return IPP_STREAM_OK;
 }

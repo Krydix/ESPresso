@@ -81,6 +81,17 @@ int espresso_bridge_rewrite(const uint8_t *message, size_t message_length,
            IPP_CODEC_OK;
 }
 
+int espresso_bridge_rewrite_request(
+    espresso_bridge_t *bridge, const uint8_t *message, size_t message_length,
+    const char *printer_uri, const char *authority, uint8_t **output,
+    size_t *output_length, size_t *attributes_length)
+{
+    return bridge && ipp_codec_rewrite_request(
+                         message, message_length, printer_uri, authority,
+                         &bridge->target, output, output_length,
+                         attributes_length) == IPP_CODEC_OK;
+}
+
 int espresso_bridge_normalize(espresso_bridge_t *bridge,
                               const uint8_t *message, size_t message_length,
                               const char *requested_attributes,
@@ -96,7 +107,8 @@ int espresso_bridge_normalize(espresso_bridge_t *bridge,
     if (ipp_codec_normalize_printer_response(
                message, message_length,
                "ipp://127.0.0.1:18631/ipp/print",
-               "ipp://127.0.0.1:18631", "compat-lab-bridge",
+               "ipp://127.0.0.1:18631",
+               "00000000-0000-4000-8000-000000000001",
                &bridge->target, &normalized, &normalized_length,
                &normalized_attributes) != IPP_CODEC_OK) {
         return 0;
@@ -106,6 +118,17 @@ int espresso_bridge_normalize(espresso_bridge_t *bridge,
         output_length, attributes_length);
     free(normalized);
     return result == IPP_CODEC_OK;
+}
+
+int espresso_bridge_filter_job(const uint8_t *message, size_t message_length,
+                               const char *requested_attributes,
+                               uint8_t **output, size_t *output_length,
+                               size_t *attributes_length)
+{
+    return ipp_codec_filter_response(
+               message, message_length, IPP_RESPONSE_KIND_JOB,
+               requested_attributes, output, output_length,
+               attributes_length) == IPP_CODEC_OK;
 }
 
 int espresso_bridge_status(uint8_t major, uint8_t minor, uint16_t status,

@@ -120,11 +120,28 @@ static void test_empty_and_invalid_streams(void)
            IPP_STREAM_WRITE_ERROR);
 }
 
+static void test_writes_http_chunks_with_short_writes(void)
+{
+    static const uint8_t input[] = "abcdefgh";
+    uint8_t output[64] = {0};
+    stream_fixture_t fixture = fixture_for(input, sizeof(input) - 1, output);
+    fixture.output_capacity = sizeof(output);
+    fixture.max_write = 2;
+    assert(ipp_stream_write_http_chunk(fixture_write, &fixture, input,
+                                       sizeof(input) - 1) == IPP_STREAM_OK);
+    assert(ipp_stream_write_http_chunk(fixture_write, &fixture, NULL, 0) ==
+           IPP_STREAM_OK);
+    static const uint8_t expected[] = "8\r\nabcdefgh\r\n0\r\n\r\n";
+    assert(fixture.output_length == sizeof(expected) - 1);
+    assert(memcmp(output, expected, sizeof(expected) - 1) == 0);
+}
+
 int main(void)
 {
     test_short_io_preserves_large_document();
     test_reports_ambiguous_transport_failures();
     test_empty_and_invalid_streams();
+    test_writes_http_chunks_with_short_writes();
     puts("IPP streaming tests passed");
     return 0;
 }

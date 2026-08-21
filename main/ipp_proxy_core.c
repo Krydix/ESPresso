@@ -87,3 +87,33 @@ void ipp_proxy_plan_request(const ipp_request_info_t *request,
                "Document format is not accepted unchanged by the selected printer");
     }
 }
+
+void ipp_proxy_plan_fault(ipp_proxy_fault_t fault, bool document_operation,
+                          ipp_proxy_fault_policy_t *policy)
+{
+    memset(policy, 0, sizeof(*policy));
+    policy->retry_allowed = !document_operation &&
+                            (fault == IPP_PROXY_FAULT_UPSTREAM_TIMEOUT ||
+                             fault == IPP_PROXY_FAULT_UPSTREAM_DISCONNECT);
+    switch (fault) {
+        case IPP_PROXY_FAULT_UPSTREAM_TIMEOUT:
+            policy->http_status = "504 Gateway Timeout";
+            policy->message = "Legacy printer timed out";
+            break;
+        case IPP_PROXY_FAULT_RESPONSE_TOO_LARGE:
+            policy->http_status = "502 Bad Gateway";
+            policy->message = "Legacy printer response exceeded the safety limit";
+            break;
+        case IPP_PROXY_FAULT_INVALID_RESPONSE:
+            policy->http_status = "502 Bad Gateway";
+            policy->message = "Legacy printer returned an invalid IPP response";
+            break;
+        case IPP_PROXY_FAULT_UPSTREAM_DISCONNECT:
+        default:
+            policy->http_status = "502 Bad Gateway";
+            policy->message = "Legacy printer disconnected during the request";
+            break;
+    }
+    /* This only records whether a retry could be safe. ESPresso never retries
+     * implicitly within a client request, keeping delivery deterministic. */
+}

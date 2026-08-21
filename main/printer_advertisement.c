@@ -12,8 +12,18 @@ void printer_advertisement_build(const printer_target_t *target,
     if (!label[0]) {
         label = "Legacy AirPrint printer";
     }
-    snprintf(advertisement->instance, sizeof(advertisement->instance),
-             "ESPresso - %.51s", label);
+    const char *identity_suffix = bridge_uuid ? bridge_uuid : "";
+    size_t uuid_length = strlen(identity_suffix);
+    if (uuid_length > 4) {
+        identity_suffix += uuid_length - 4;
+    }
+    if (*identity_suffix) {
+        snprintf(advertisement->instance, sizeof(advertisement->instance),
+                 "ESPresso - %.46s (%.4s)", label, identity_suffix);
+    } else {
+        snprintf(advertisement->instance, sizeof(advertisement->instance),
+                 "ESPresso - %.51s", label);
+    }
     snprintf(advertisement->make_model, sizeof(advertisement->make_model), "%s",
              label);
     snprintf(advertisement->product, sizeof(advertisement->product), "(%s)",

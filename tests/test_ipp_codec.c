@@ -143,6 +143,83 @@ static void test_does_not_rewrite_unrelated_uri(void)
     free(output);
 }
 
+static void test_consumes_facade_defaults_and_translates_legacy_color(void)
+{
+    uint8_t message[1024] = {2, 0, 0, 2, 0, 0, 0, 31, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    length = add_attribute(message, length, 0x45, "printer-uri",
+                           "ipp://espresso.local/ipp/print");
+    message[length++] = 2;
+    const uint8_t one[] = {0, 0, 0, 1};
+    const uint8_t none[] = {0, 0, 0, 3};
+    const uint8_t normal[] = {0, 0, 0, 4};
+    length = add_raw_attribute(message, length, 0x21, "copies", one,
+                               sizeof(one));
+    length = add_raw_attribute(message, length, 0x23, "finishings", none,
+                               sizeof(none));
+    length = add_raw_attribute(message, length, 0x23,
+                               "orientation-requested", none, sizeof(none));
+    length = add_attribute(message, length, 0x44, "output-bin", "face-down");
+    length = add_raw_attribute(message, length, 0x23, "print-quality", normal,
+                               sizeof(normal));
+    length = add_attribute(message, length, 0x44, "sides", "one-sided");
+    length = add_attribute(message, length, 0x44, "print-color-mode", "color");
+    message[length++] = 3;
+    const uint8_t document[] = {1, 2, 3, 4};
+    memcpy(message + length, document, sizeof(document));
+    length += sizeof(document);
+
+    printer_target_t target = {0};
+    target.legacy_output_mode = true;
+    uint8_t *output = NULL;
+    size_t output_length = 0;
+    size_t attributes_length = 0;
+    assert(ipp_codec_rewrite_request(
+               message, length, "ipp://legacy.local/ipp/print",
+               "ipp://legacy.local", &target, &output, &output_length,
+               &attributes_length) == IPP_CODEC_OK);
+    assert(!contains(output, output_length, "copies"));
+    assert(!contains(output, output_length, "finishings"));
+    assert(!contains(output, output_length, "orientation-requested"));
+    assert(!contains(output, output_length, "output-bin"));
+    assert(!contains(output, output_length, "print-quality"));
+    assert(!contains(output, output_length, "sides"));
+    assert(!contains(output, output_length, "print-color-mode"));
+    assert(contains(output, output_length, "output-mode"));
+    assert(memcmp(output + output_length - sizeof(document), document,
+                  sizeof(document)) == 0);
+    free(output);
+
+    target.job_template_capabilities = ESPRESSO_JOB_CAP_FINISHINGS;
+    assert(ipp_codec_rewrite_request(
+               message, length, "ipp://legacy.local/ipp/print",
+               "ipp://legacy.local", &target, &output, &output_length,
+               &attributes_length) == IPP_CODEC_OK);
+    assert(contains(output, output_length, "finishings"));
+    free(output);
+
+    const uint8_t staple[] = {0, 0, 0, 4};
+    uint8_t unsupported[256] = {2, 0, 0, 2, 0, 0, 0, 32, 1};
+    size_t unsupported_length = 9;
+    unsupported_length = add_attribute(unsupported, unsupported_length, 0x47,
+                                       "attributes-charset", "utf-8");
+    unsupported[unsupported_length++] = 2;
+    unsupported_length = add_raw_attribute(
+        unsupported, unsupported_length, 0x23, "finishings", staple,
+        sizeof(staple));
+    unsupported[unsupported_length++] = 3;
+    target.job_template_capabilities = 0;
+    assert(ipp_codec_rewrite_request(
+               unsupported, unsupported_length,
+               "ipp://legacy.local/ipp/print", "ipp://legacy.local", &target,
+               &output, &output_length, &attributes_length) ==
+           IPP_CODEC_UNSUPPORTED);
+}
+
 static void test_normalizes_frontend_ipp_version(void)
 {
     uint8_t message[128] = {1, 1, 0, 0, 0, 0, 0, 10, 4};
@@ -178,6 +255,19 @@ static void test_normalizes_frontend_ipp_version(void)
     assert(contains(output, output_length, "media-col-default"));
     assert(contains(output, output_length, "print-color-mode-supported"));
     assert(contains(output, output_length, "printer-resolution-supported"));
+    assert(contains(output, output_length, "finishings-default"));
+    assert(contains(output, output_length, "finishings-supported"));
+    assert(contains(output, output_length, "orientation-requested-default"));
+    assert(contains(output, output_length, "orientation-requested-supported"));
+    assert(contains(output, output_length, "output-bin-default"));
+    assert(contains(output, output_length, "output-bin-supported"));
+    assert(contains(output, output_length, "print-quality-default"));
+    assert(contains(output, output_length, "print-quality-supported"));
+    assert(contains(output, output_length, "sides-default"));
+    assert(contains(output, output_length, "pages-per-minute"));
+    assert(contains(output, output_length, "pages-per-minute-color"));
+    assert(contains(output, output_length, "copies-default"));
+    assert(contains(output, output_length, "media-default"));
     free(output);
 }
 
@@ -551,6 +641,9 @@ static void test_extracts_relayable_capability_profile(void)
     length = add_attribute(message, length, 0x44, "media-default",
                            "iso_a4_210x297mm");
     length = add_attribute(message, length, 0x44, "output-mode-default", "color");
+    length = add_attribute(message, length, 0x44, "output-mode-supported",
+                           "monochrome");
+    length = add_attribute(message, length, 0x44, "", "color");
     length = add_attribute(message, length, 0x44, "sides-supported",
                            "one-sided");
     length = add_attribute(message, length, 0x44, "",
@@ -593,6 +686,7 @@ static void test_extracts_relayable_capability_profile(void)
     assert(target.copies && target.copies_upper == 99);
     assert(strcmp(target.media_default, "iso_a4_210x297mm") == 0);
     assert(strcmp(target.color_mode_default, "color") == 0);
+    assert(target.legacy_output_mode);
     assert(target.resolution_low_dpi == 600 && target.resolution_high_dpi == 600);
     assert((target.operations_supported & (1ULL << 2)) != 0);
     assert((target.operations_supported & (1ULL << 11)) != 0);
@@ -608,6 +702,7 @@ int main(void)
     test_rewrites_job_uri_authority();
     test_reports_incomplete_message();
     test_does_not_rewrite_unrelated_uri();
+    test_consumes_facade_defaults_and_translates_legacy_color();
     test_normalizes_frontend_ipp_version();
     test_builds_cups_style_capability_query();
     test_builds_format_specific_capability_query();

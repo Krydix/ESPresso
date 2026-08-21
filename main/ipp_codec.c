@@ -75,6 +75,19 @@ typedef uint64_t present_attribute_t;
 #define PRESENT_UP_TIME (1ULL << 34)
 #define PRESENT_PDL_OVERRIDE (1ULL << 35)
 #define PRESENT_QUEUED_JOB_COUNT (1ULL << 36)
+#define PRESENT_COPIES_DEFAULT (1ULL << 37)
+#define PRESENT_MEDIA_DEFAULT (1ULL << 38)
+#define PRESENT_FINISHINGS_DEFAULT (1ULL << 39)
+#define PRESENT_FINISHINGS_SUPPORTED (1ULL << 40)
+#define PRESENT_ORIENTATION_DEFAULT (1ULL << 41)
+#define PRESENT_ORIENTATION_SUPPORTED (1ULL << 42)
+#define PRESENT_OUTPUT_BIN_DEFAULT (1ULL << 43)
+#define PRESENT_OUTPUT_BIN_SUPPORTED (1ULL << 44)
+#define PRESENT_PRINT_QUALITY_DEFAULT (1ULL << 45)
+#define PRESENT_PRINT_QUALITY_SUPPORTED (1ULL << 46)
+#define PRESENT_SIDES_DEFAULT (1ULL << 47)
+#define PRESENT_PAGES_PER_MINUTE (1ULL << 48)
+#define PRESENT_PAGES_PER_MINUTE_COLOR (1ULL << 49)
 
 static uint16_t read_u16(const uint8_t *data)
 {
@@ -501,6 +514,19 @@ static uint64_t attribute_presence(const char *name)
         {"printer-up-time", PRESENT_UP_TIME},
         {"pdl-override-supported", PRESENT_PDL_OVERRIDE},
         {"queued-job-count", PRESENT_QUEUED_JOB_COUNT},
+        {"copies-default", PRESENT_COPIES_DEFAULT},
+        {"media-default", PRESENT_MEDIA_DEFAULT},
+        {"finishings-default", PRESENT_FINISHINGS_DEFAULT},
+        {"finishings-supported", PRESENT_FINISHINGS_SUPPORTED},
+        {"orientation-requested-default", PRESENT_ORIENTATION_DEFAULT},
+        {"orientation-requested-supported", PRESENT_ORIENTATION_SUPPORTED},
+        {"output-bin-default", PRESENT_OUTPUT_BIN_DEFAULT},
+        {"output-bin-supported", PRESENT_OUTPUT_BIN_SUPPORTED},
+        {"print-quality-default", PRESENT_PRINT_QUALITY_DEFAULT},
+        {"print-quality-supported", PRESENT_PRINT_QUALITY_SUPPORTED},
+        {"sides-default", PRESENT_SIDES_DEFAULT},
+        {"pages-per-minute", PRESENT_PAGES_PER_MINUTE},
+        {"pages-per-minute-color", PRESENT_PAGES_PER_MINUTE_COLOR},
     };
     for (size_t i = 0; i < sizeof(attributes) / sizeof(attributes[0]); ++i) {
         if (strcmp(name, attributes[i].name) == 0) {
@@ -849,8 +875,17 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
             return false;
         }
     }
+    if (!(present & PRESENT_COPIES_DEFAULT) && target->copies_upper &&
+        !append_i32(buffer, IPP_TAG_INTEGER, "copies-default", 1)) {
+        return false;
+    }
     if (!(present & PRESENT_MEDIA) && target->media[0] &&
         !append_csv_attributes(buffer, IPP_TAG_KEYWORD, "media-supported", target->media)) {
+        return false;
+    }
+    if (!(present & PRESENT_MEDIA_DEFAULT) && target->media_default[0] &&
+        !append_string(buffer, IPP_TAG_KEYWORD, "media-default",
+                       target->media_default)) {
         return false;
     }
     if (!(present & PRESENT_MEDIA_COL_DATABASE) && target->media[0] &&
@@ -892,6 +927,52 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
     if (!(present & PRESENT_RESOLUTION_DEFAULT) && target->resolution_low_dpi &&
         !append_resolution(buffer, "printer-resolution-default",
                            target->resolution_low_dpi)) {
+        return false;
+    }
+    if (!(present & PRESENT_FINISHINGS_DEFAULT) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "finishings-default", 3)) {
+        return false;
+    }
+    if (!(present & PRESENT_FINISHINGS_SUPPORTED) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "finishings-supported", 3)) {
+        return false;
+    }
+    if (!(present & PRESENT_ORIENTATION_DEFAULT) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "orientation-requested-default", 3)) {
+        return false;
+    }
+    if (!(present & PRESENT_ORIENTATION_SUPPORTED) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "orientation-requested-supported", 3)) {
+        return false;
+    }
+    if (!(present & PRESENT_OUTPUT_BIN_DEFAULT) &&
+        !append_string(buffer, IPP_TAG_KEYWORD, "output-bin-default",
+                       "face-down")) {
+        return false;
+    }
+    if (!(present & PRESENT_OUTPUT_BIN_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_KEYWORD, "output-bin-supported",
+                       "face-down")) {
+        return false;
+    }
+    if (!(present & PRESENT_PRINT_QUALITY_DEFAULT) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "print-quality-default", 4)) {
+        return false;
+    }
+    if (!(present & PRESENT_PRINT_QUALITY_SUPPORTED) &&
+        !append_i32(buffer, IPP_TAG_ENUM, "print-quality-supported", 4)) {
+        return false;
+    }
+    if (!(present & PRESENT_SIDES_DEFAULT) &&
+        !append_string(buffer, IPP_TAG_KEYWORD, "sides-default", "one-sided")) {
+        return false;
+    }
+    if (!(present & PRESENT_PAGES_PER_MINUTE) &&
+        !append_i32(buffer, IPP_TAG_INTEGER, "pages-per-minute", 0)) {
+        return false;
+    }
+    if (!(present & PRESENT_PAGES_PER_MINUTE_COLOR) && target->color &&
+        !append_i32(buffer, IPP_TAG_INTEGER, "pages-per-minute-color", 0)) {
         return false;
     }
     if (!(present & PRESENT_COMPRESSION) &&
@@ -1091,6 +1172,206 @@ ipp_codec_result_t ipp_codec_rewrite(
     return transform_message(input, input_length, printer_uri, uri_authority,
                              false, NULL, NULL, output, output_length,
                              attributes_length);
+}
+
+typedef enum {
+    JOB_ATTRIBUTE_KEEP,
+    JOB_ATTRIBUTE_DROP,
+    JOB_ATTRIBUTE_UNSUPPORTED,
+} job_attribute_action_t;
+
+static bool encoded_u32_equals(const uint8_t *value, size_t value_length,
+                               uint32_t expected)
+{
+    return value_length == 4 && read_u32(value) == expected;
+}
+
+static job_attribute_action_t facade_job_attribute_action(
+    const printer_target_t *target, const char *name, uint8_t tag,
+    const uint8_t *value, size_t value_length, const char **replacement_name)
+{
+    *replacement_name = NULL;
+    if (strcmp(name, "print-color-mode") == 0 && target->legacy_output_mode) {
+        *replacement_name = "output-mode";
+        return JOB_ATTRIBUTE_KEEP;
+    }
+    struct neutral_default {
+        const char *name;
+        uint32_t capability;
+        uint8_t tag;
+        uint32_t integer_value;
+        const char *string_value;
+    };
+    static const struct neutral_default defaults[] = {
+        {"copies", ESPRESSO_JOB_CAP_COPIES, IPP_TAG_INTEGER, 1, NULL},
+        {"finishings", ESPRESSO_JOB_CAP_FINISHINGS, IPP_TAG_ENUM, 3, NULL},
+        {"orientation-requested", ESPRESSO_JOB_CAP_ORIENTATION,
+         IPP_TAG_ENUM, 3, NULL},
+        {"output-bin", ESPRESSO_JOB_CAP_OUTPUT_BIN, IPP_TAG_KEYWORD, 0,
+         "face-down"},
+        {"print-quality", ESPRESSO_JOB_CAP_PRINT_QUALITY,
+         IPP_TAG_ENUM, 4, NULL},
+        {"sides", ESPRESSO_JOB_CAP_SIDES, IPP_TAG_KEYWORD, 0,
+         "one-sided"},
+    };
+    for (size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); ++i) {
+        const struct neutral_default *entry = defaults + i;
+        if (strcmp(name, entry->name) != 0 ||
+            (target->job_template_capabilities & entry->capability)) {
+            continue;
+        }
+        bool matches;
+        if (entry->string_value) {
+            matches = (tag == IPP_TAG_KEYWORD || tag == IPP_TAG_NAME) &&
+                      equal_span((const char *)value, value_length,
+                                 entry->string_value,
+                                 strlen(entry->string_value));
+        } else {
+            matches = tag == entry->tag &&
+                      encoded_u32_equals(value, value_length,
+                                         entry->integer_value);
+        }
+        return matches ? JOB_ATTRIBUTE_DROP : JOB_ATTRIBUTE_UNSUPPORTED;
+    }
+    return JOB_ATTRIBUTE_KEEP;
+}
+
+static ipp_codec_result_t normalize_facade_job_defaults(
+    const uint8_t *input, size_t input_length, const printer_target_t *target,
+    uint8_t **output, size_t *output_length, size_t *attributes_length)
+{
+    if (!input || !target || !output || !output_length || !attributes_length) {
+        return IPP_CODEC_MALFORMED;
+    }
+    *output = NULL;
+    *output_length = 0;
+    *attributes_length = 0;
+    byte_buffer_t result = {0};
+    if (input_length < IPP_HEADER_LENGTH) {
+        return IPP_CODEC_INCOMPLETE;
+    }
+    if (!append(&result, input, IPP_HEADER_LENGTH)) {
+        return IPP_CODEC_NO_MEMORY;
+    }
+    size_t cursor = IPP_HEADER_LENGTH;
+    uint8_t current_group = 0;
+    bool current_group_emitted = true;
+    char current_name[IPP_NAME_MAX + 1] = {0};
+    bool ended = false;
+    while (cursor < input_length) {
+        uint8_t tag = input[cursor++];
+        if (tag == IPP_TAG_END_ATTRIBUTES) {
+            if (!append(&result, &tag, 1)) {
+                free(result.data);
+                return IPP_CODEC_NO_MEMORY;
+            }
+            *attributes_length = result.length;
+            ended = true;
+            break;
+        }
+        if (tag <= 0x0f) {
+            current_group = tag;
+            current_group_emitted = false;
+            current_name[0] = '\0';
+            continue;
+        }
+        if (cursor + 2 > input_length) {
+            free(result.data);
+            return IPP_CODEC_INCOMPLETE;
+        }
+        uint16_t name_length = read_u16(input + cursor);
+        cursor += 2;
+        if (name_length > IPP_NAME_MAX || cursor + name_length + 2 > input_length) {
+            free(result.data);
+            return name_length > IPP_NAME_MAX ? IPP_CODEC_MALFORMED :
+                                                IPP_CODEC_INCOMPLETE;
+        }
+        const uint8_t *name_bytes = input + cursor;
+        if (name_length) {
+            memcpy(current_name, name_bytes, name_length);
+            current_name[name_length] = '\0';
+        } else if (!current_name[0]) {
+            free(result.data);
+            return IPP_CODEC_MALFORMED;
+        }
+        cursor += name_length;
+        uint16_t value_length = read_u16(input + cursor);
+        cursor += 2;
+        if (cursor + value_length > input_length) {
+            free(result.data);
+            return IPP_CODEC_INCOMPLETE;
+        }
+        const uint8_t *value = input + cursor;
+        cursor += value_length;
+
+        const char *replacement_name = NULL;
+        job_attribute_action_t action = JOB_ATTRIBUTE_KEEP;
+        if (current_group == IPP_TAG_JOB_ATTRIBUTES) {
+            action = facade_job_attribute_action(
+                target, current_name, tag, value, value_length,
+                &replacement_name);
+        }
+        if (action == JOB_ATTRIBUTE_UNSUPPORTED) {
+            free(result.data);
+            return IPP_CODEC_UNSUPPORTED;
+        }
+        if (action == JOB_ATTRIBUTE_DROP) {
+            continue;
+        }
+        if (!current_group_emitted && !append(&result, &current_group, 1)) {
+            free(result.data);
+            return IPP_CODEC_NO_MEMORY;
+        }
+        current_group_emitted = true;
+        const char *output_name = name_length && replacement_name ?
+                                      replacement_name : NULL;
+        size_t output_name_length = output_name ? strlen(output_name) :
+                                                  name_length;
+        const void *output_name_bytes = output_name ?
+                                            (const void *)output_name :
+                                            (const void *)name_bytes;
+        if (!append(&result, &tag, 1) ||
+            !append_u16(&result, output_name_length) ||
+            !append(&result, output_name_bytes, output_name_length) ||
+            !append_u16(&result, value_length) ||
+            !append(&result, value, value_length)) {
+            free(result.data);
+            return IPP_CODEC_NO_MEMORY;
+        }
+    }
+    if (!ended) {
+        free(result.data);
+        return IPP_CODEC_INCOMPLETE;
+    }
+    if (cursor < input_length &&
+        !append(&result, input + cursor, input_length - cursor)) {
+        free(result.data);
+        return IPP_CODEC_NO_MEMORY;
+    }
+    *output = result.data;
+    *output_length = result.length;
+    return IPP_CODEC_OK;
+}
+
+ipp_codec_result_t ipp_codec_rewrite_request(
+    const uint8_t *input, size_t input_length, const char *printer_uri,
+    const char *uri_authority, const printer_target_t *target,
+    uint8_t **output, size_t *output_length, size_t *attributes_length)
+{
+    uint8_t *rewritten = NULL;
+    size_t rewritten_length = 0;
+    size_t rewritten_attributes = 0;
+    ipp_codec_result_t result = ipp_codec_rewrite(
+        input, input_length, printer_uri, uri_authority, &rewritten,
+        &rewritten_length, &rewritten_attributes);
+    if (result != IPP_CODEC_OK) {
+        return result;
+    }
+    result = normalize_facade_job_defaults(
+        rewritten, rewritten_length, target, output, output_length,
+        attributes_length);
+    free(rewritten);
+    return result;
 }
 
 ipp_codec_result_t ipp_codec_normalize_printer_response(
@@ -1503,6 +1784,19 @@ void ipp_codec_finalize_profile(printer_target_t *target)
         target->operations_supported |=
             (1ULL << IPP_OPERATION_PRINT_JOB) |
             (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
+        if (!target->copies_upper) {
+            target->copies_upper = 1;
+        }
+    }
+    if (!target->media_default[0] && target->media[0]) {
+        const char *separator = strchr(target->media, ',');
+        size_t length = separator ? (size_t)(separator - target->media) :
+                                    strlen(target->media);
+        while (length && isspace((unsigned char)target->media[length - 1])) {
+            --length;
+        }
+        copy_value(target->media_default, sizeof(target->media_default),
+                   (const uint8_t *)target->media, length);
     }
     if (!target->ipp_versions[0] && target->upstream_ipp_major) {
         snprintf(target->ipp_versions, sizeof(target->ipp_versions), "%u.%u",
@@ -1611,15 +1905,30 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
                 snprintf(target->color_mode_default,
                          sizeof(target->color_mode_default), "auto");
             }
-        } else if ((strcmp(current_name, "print-color-mode-supported") == 0 ||
-                    strcmp(current_name, "output-mode-supported") == 0) &&
-                   (value_contains(value, value_length, "color") ||
-                    value_contains(value, value_length, "rgb") ||
-                    value_contains(value, value_length, "cmyk"))) {
-            target->color = true;
-        } else if (strcmp(current_name, "sides-supported") == 0 &&
-                   value_contains(value, value_length, "two-sided")) {
-            target->duplex = true;
+        } else if (strcmp(current_name, "print-color-mode-supported") == 0) {
+            target->job_template_capabilities |=
+                ESPRESSO_JOB_CAP_PRINT_COLOR_MODE;
+            target->legacy_output_mode = false;
+            if (value_contains(value, value_length, "color") ||
+                value_contains(value, value_length, "rgb") ||
+                value_contains(value, value_length, "cmyk")) {
+                target->color = true;
+            }
+        } else if (strcmp(current_name, "output-mode-supported") == 0) {
+            if (!(target->job_template_capabilities &
+                  ESPRESSO_JOB_CAP_PRINT_COLOR_MODE)) {
+                target->legacy_output_mode = true;
+            }
+            if (value_contains(value, value_length, "color") ||
+                value_contains(value, value_length, "rgb") ||
+                value_contains(value, value_length, "cmyk")) {
+                target->color = true;
+            }
+        } else if (strcmp(current_name, "sides-supported") == 0) {
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_SIDES;
+            if (value_contains(value, value_length, "two-sided")) {
+                target->duplex = true;
+            }
         } else if (strcmp(current_name, "copies-supported") == 0 &&
                    tag == IPP_TAG_RANGE && value_length == 8) {
             uint32_t upper = read_u32(value + 4);
@@ -1628,6 +1937,15 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
             }
             target->copies_upper = (uint16_t)upper;
             target->copies = upper > 1;
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_COPIES;
+        } else if (strcmp(current_name, "finishings-supported") == 0) {
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_FINISHINGS;
+        } else if (strcmp(current_name, "orientation-requested-supported") == 0) {
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_ORIENTATION;
+        } else if (strcmp(current_name, "output-bin-supported") == 0) {
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_OUTPUT_BIN;
+        } else if (strcmp(current_name, "print-quality-supported") == 0) {
+            target->job_template_capabilities |= ESPRESSO_JOB_CAP_PRINT_QUALITY;
         } else if ((strcmp(current_name, "sheet-collate-supported") == 0 ||
                     strcmp(current_name, "multiple-document-handling-supported") == 0) &&
                    value_contains(value, value_length, "collated") &&

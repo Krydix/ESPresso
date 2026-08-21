@@ -79,11 +79,18 @@ class Codec:
                                                       ctypes.c_char_p, ctypes.c_char_p,
                                                       voidpp, sizep, sizep]
         self.lib.espresso_bridge_rewrite.restype = ctypes.c_int
+        self.lib.espresso_bridge_rewrite_request.argtypes = [
+            ctypes.c_void_p, u8p, ctypes.c_size_t, ctypes.c_char_p,
+            ctypes.c_char_p, voidpp, sizep, sizep]
+        self.lib.espresso_bridge_rewrite_request.restype = ctypes.c_int
         self.lib.espresso_bridge_normalize.argtypes = [ctypes.c_void_p, u8p,
                                                         ctypes.c_size_t,
                                                         ctypes.c_char_p, voidpp,
                                                         sizep, sizep]
         self.lib.espresso_bridge_normalize.restype = ctypes.c_int
+        self.lib.espresso_bridge_filter_job.argtypes = [
+            u8p, ctypes.c_size_t, ctypes.c_char_p, voidpp, sizep, sizep]
+        self.lib.espresso_bridge_filter_job.restype = ctypes.c_int
         self.lib.espresso_bridge_status.argtypes = [ctypes.c_uint8, ctypes.c_uint8,
                                                      ctypes.c_uint16, ctypes.c_uint32,
                                                      ctypes.c_char_p, voidpp, sizep]
@@ -143,6 +150,16 @@ class Codec:
             source, len(data), printer_uri.encode(), authority.encode(), out,
             length, ctypes.byref(attributes_length)))
 
+    def rewrite_request(self, data: bytes, printer_uri: str,
+                        authority: str) -> bytes:
+        source = self._input(data)
+        attributes_length = ctypes.c_size_t()
+        return self._output(lambda out, length:
+            self.lib.espresso_bridge_rewrite_request(
+                self.handle, source, len(data), printer_uri.encode(),
+                authority.encode(), out, length,
+                ctypes.byref(attributes_length)))
+
     def normalize(self, data: bytes, requested_attributes: str = "") -> bytes:
         source = self._input(data)
         attributes_length = ctypes.c_size_t()
@@ -152,6 +169,14 @@ class Codec:
                     self.handle, source, len(data), requested_attributes.encode(),
                     out, length,
                     ctypes.byref(attributes_length)))
+
+    def filter_job(self, data: bytes, requested_attributes: str) -> bytes:
+        source = self._input(data)
+        attributes_length = ctypes.c_size_t()
+        return self._output(lambda out, length:
+            self.lib.espresso_bridge_filter_job(
+                source, len(data), requested_attributes.encode(), out, length,
+                ctypes.byref(attributes_length)))
 
     def status(self, major: int, minor: int, status: int, request_id: int,
                message: str) -> bytes:
@@ -335,6 +360,17 @@ class LabState:
         if spec.get("rejectIpp20") and info.major >= 2:
             return ipp_response(legacy_version, 0x0503, info.request_id,
                                 operation_attributes(), [])
+        if info.operation_id in (IPP_PRINT_JOB, IPP_VALIDATE_JOB,
+                                 IPP_CREATE_JOB, IPP_SEND_DOCUMENT):
+            facade_only = ("finishings", "orientation-requested", "output-bin",
+                           "print-quality")
+            if any(has_attribute(request, name) for name in facade_only):
+                return ipp_response(legacy_version, 0x040B, info.request_id,
+                                    operation_attributes(), [])
+            if spec.get("oldOutputMode") and \
+                    has_attribute(request, "print-color-mode"):
+                return ipp_response(legacy_version, 0x040B, info.request_id,
+                                    operation_attributes(), [])
         if info.operation_id == IPP_GET_PRINTER_ATTRIBUTES:
             requested_format = bytes(info.document_format).split(b"\0", 1)[0].decode()
             profile = dict(spec)
@@ -438,10 +474,9 @@ class LabState:
                 is_completed = job["state"] in (7, 8, 9)
                 if is_completed != completed:
                     continue
-                attributes = self.job_attributes(job)
-                if not info.requested_attributes:
-                    attributes = attributes[:2]
-                groups.append((0x02, attributes))
+                # Deliberately over-report like some legacy printers. The facade,
+                # rather than this emulator, owns requested-attributes behavior.
+                groups.append((0x02, self.job_attributes(job)))
             return ipp_response(legacy_version, 0, info.request_id,
                                 operation_attributes(), groups)
         if info.operation_id == IPP_CANCEL_JOB:
@@ -464,6 +499,43 @@ class QuietHandler(BaseHTTPRequestHandler):
         pass
 
     def read_ipp(self) -> bytes:
+        transfer_encoding = self.headers.get("Transfer-Encoding", "")
+        self.request_was_chunked = bool(transfer_encoding)
+        if transfer_encoding:
+            if transfer_encoding.lower() != "chunked" or \
+                    self.headers.get("Content-Length") is not None:
+                raise ValueError("ambiguous or unsupported request framing")
+            body = bytearray()
+            while True:
+                size_line = self.rfile.readline(257)
+                if not size_line.endswith(b"\r\n") or len(size_line) > 256:
+                    raise ValueError("malformed chunk size")
+                size_text = size_line[:-2].split(b";", 1)[0].strip()
+                if not size_text:
+                    raise ValueError("missing chunk size")
+                try:
+                    chunk_size = int(size_text, 16)
+                except ValueError as error:
+                    raise ValueError("malformed chunk size") from error
+                if chunk_size == 0:
+                    trailer_bytes = 0
+                    while True:
+                        trailer = self.rfile.readline(257)
+                        if not trailer.endswith(b"\r\n") or len(trailer) > 256:
+                            raise ValueError("malformed chunk trailer")
+                        if trailer == b"\r\n":
+                            break
+                        trailer_bytes += len(trailer)
+                        if trailer_bytes > 2048 or b":" not in trailer:
+                            raise ValueError("invalid chunk trailer")
+                    break
+                chunk = self.rfile.read(chunk_size)
+                if len(chunk) != chunk_size or self.rfile.read(2) != b"\r\n":
+                    raise ValueError("truncated chunk")
+                body.extend(chunk)
+            if len(body) < 8:
+                raise ValueError("missing IPP request body")
+            return bytes(body)
         length = int(self.headers.get("Content-Length", "0"))
         if length < 8:
             raise ValueError("missing IPP request body")
@@ -512,11 +584,12 @@ def make_legacy_handler(state: LabState):
     return LegacyHandler
 
 
-def post_ipp(port: int, body: bytes) -> bytes:
+def post_ipp(port: int, body: bytes, chunked: bool = False) -> bytes:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    connection.request("POST", "/ipp/print", body,
+    connection.request("POST", "/ipp/print", [body] if chunked else body,
                        {"Content-Type": "application/ipp",
-                        "Accept": "application/ipp"})
+                        "Accept": "application/ipp"},
+                       encode_chunked=chunked)
     response = connection.getresponse()
     data = response.read()
     connection.close()
@@ -549,12 +622,19 @@ def make_proxy_handler(state: LabState):
                     upstream = state.codec.query(upstream_major, upstream_minor,
                                                  info.request_id, document_format)
                 else:
-                    upstream = bytearray(state.codec.rewrite(
-                        request, "ipp://127.0.0.1:18632/ipp/print",
-                        "ipp://127.0.0.1:18632"))
+                    try:
+                        upstream = bytearray(state.codec.rewrite_request(
+                            request, "ipp://127.0.0.1:18632/ipp/print",
+                            "ipp://127.0.0.1:18632"))
+                    except ValueError:
+                        self.local_status(
+                            info, 0x040B, "Unsupported job attribute value")
+                        return
                     upstream[0:2] = bytes([upstream_major, upstream_minor])
                     upstream = bytes(upstream)
-                legacy = post_ipp(18632, upstream)
+                legacy = post_ipp(
+                    18632, upstream,
+                    chunked=getattr(self, "request_was_chunked", False))
                 if info.operation_id == IPP_GET_PRINTER_ATTRIBUTES:
                     state.codec.apply(legacy)
                     requested = bytes(info.requested_attributes).split(
@@ -564,6 +644,12 @@ def make_proxy_handler(state: LabState):
                     response = state.codec.rewrite(
                         legacy, "ipp://127.0.0.1:18631/ipp/print",
                         "ipp://127.0.0.1:18631")
+                    if info.operation_id in (IPP_GET_JOB_ATTRIBUTES, IPP_GET_JOBS):
+                        requested = bytes(info.requested_attributes).split(
+                            b"\0", 1)[0].decode()
+                        if info.operation_id == IPP_GET_JOBS and not requested:
+                            requested = "job-uri,job-id"
+                        response = state.codec.filter_job(response, requested)
                 response = bytearray(response)
                 response[0:2] = bytes([info.major, info.minor])
                 self.send_ipp(bytes(response))
@@ -611,8 +697,9 @@ def canonical(value):
 
 
 def run_ipptool(root: Path, uri: str, test_file: Path, plist_path: Path | None = None,
-                version: str | None = None, filename: Path | None = None):
-    command = ["ipptool", "-L"]
+                version: str | None = None, filename: Path | None = None,
+                chunked: bool = False):
+    command = ["ipptool", "-C" if chunked else "-L"]
     if plist_path:
         command += ["-P", str(plist_path)]
     elif test_file.name.startswith("ipp-") or test_file.name == "rfc-core.test":
@@ -675,6 +762,13 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/job-state.test")
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/job-requested-attributes.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/facade-defaults.test")
+            if fixture["ipp"].get("oldOutputMode"):
+                run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                            root / "tests/compat/legacy-output-mode.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/rfc-core.test")
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/requested-attributes.test")
@@ -697,6 +791,14 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
                         filename=large_path)
             if large_document not in state.captured_documents:
                 raise AssertionError(f"{fixture_path.stem}: large document bytes changed")
+            captured_before_chunked = len(state.captured_documents)
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/large-print.test",
+                        filename=large_path, chunked=True)
+            if len(state.captured_documents) <= captured_before_chunked or \
+                    state.captured_documents[-1] != large_document:
+                raise AssertionError(
+                    f"{fixture_path.stem}: chunked document bytes changed")
         print(f"{fixture_path.stem}: CUPS differential + job flow [PASS]")
     finally:
         if proxy:
@@ -724,7 +826,7 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
             ["cups-config", "--datadir"], text=True).strip())
         suites = [
             ("ipp-1.1", "1.1", cups_data / "ipptool/ipp-1.1.test", "pass"),
-            ("ipp-2.0", "2.0", cups_data / "ipptool/ipp-2.0.test", "fail"),
+            ("ipp-2.0", "2.0", cups_data / "ipptool/ipp-2.0.test", "pass"),
             ("ipp-everywhere", "2.0", cups_data / "ipptool/ipp-everywhere.test",
              "fail"),
         ]

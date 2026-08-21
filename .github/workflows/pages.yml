@@ -56,6 +56,10 @@ jobs:
       - name: Run codec sanitizers
         run: make test-sanitize
 
+      - name: Run coverage-guided codec fuzz smoke test
+        if: runner.os == 'Linux'
+        run: make test-fuzz-smoke
+
   firmware:
     needs: test
     runs-on: ubuntu-latest

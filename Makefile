@@ -24,7 +24,7 @@ define run_idf
 			-D SDKCONFIG="$(SDKCONFIG)" $(1)'
 endef
 
-.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-sanitize test-roadmap test-conformance-report web-installer web-installer-all
+.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-sanitize test-fuzz-smoke test-roadmap test-conformance-report web-installer web-installer-all
 
 help:
 	@printf '%s\n' \
@@ -37,6 +37,7 @@ help:
 		'  make test-cups             Validate normalized IPP with CUPS ipptool' \
 		'  make test-compat           Run the CUPS differential compatibility lab' \
 		'  make test-sanitize         Run codec tests with ASan and UBSan' \
+		'  make test-fuzz-smoke       Run the coverage-guided IPP codec fuzz gate' \
 		'  make test-roadmap          Validate and report the feature test matrix' \
 		'  make test-conformance-report  Record expected-red full CUPS suites' \
 		'  make web-installer         Stage a flasher for TARGET' \
@@ -105,6 +106,12 @@ test:
 	@"$(BUILD_DIR)/host-tests/test_ipp_stream"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/ipp_http_request.c" \
+		"$(ROOT_DIR)/tests/test_ipp_http_request.c" \
+		-o "$(BUILD_DIR)/host-tests/test_ipp_http_request"
+	@"$(BUILD_DIR)/host-tests/test_ipp_http_request"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-I"$(ROOT_DIR)/main" \
 		"$(ROOT_DIR)/main/ipp_codec.c" \
 		"$(ROOT_DIR)/tests/test_ipp_fuzz_smoke.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke"
@@ -170,10 +177,36 @@ test-sanitize:
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/ipp_http_request.c" \
+		"$(ROOT_DIR)/tests/test_ipp_http_request.c" \
+		-o "$(BUILD_DIR)/host-tests/test_ipp_http_request_sanitize"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_ipp_http_request_sanitize"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I"$(ROOT_DIR)/main" \
 		"$(ROOT_DIR)/main/ipp_codec.c" \
 		"$(ROOT_DIR)/tests/test_ipp_fuzz_smoke.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke_sanitize"
 	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke_sanitize"
+
+test-fuzz-smoke:
+	@command -v clang >/dev/null || { echo "clang is required"; exit 1; }
+	@mkdir -p "$(BUILD_DIR)/host-tests/fuzz-artifacts"
+	@clang -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+		-fsanitize=address,undefined -fsanitize-coverage=trace-pc-guard \
+		-I"$(ROOT_DIR)/main" \
+		-c "$(ROOT_DIR)/main/ipp_codec.c" \
+		-o "$(BUILD_DIR)/host-tests/ipp_codec_fuzz.o"
+	@clang -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer \
+		-fsanitize=address,undefined -DESPRESSO_STANDALONE_FUZZ \
+		-I"$(ROOT_DIR)/main" \
+		-c "$(ROOT_DIR)/tests/fuzz_ipp_codec.c" \
+		-o "$(BUILD_DIR)/host-tests/fuzz_ipp_codec.o"
+	@clang -fsanitize=address,undefined \
+		"$(BUILD_DIR)/host-tests/ipp_codec_fuzz.o" \
+		"$(BUILD_DIR)/host-tests/fuzz_ipp_codec.o" \
+		-o "$(BUILD_DIR)/host-tests/fuzz_ipp_codec"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/fuzz_ipp_codec"
 
 test-roadmap:
 	@python3 "$(ROOT_DIR)/scripts/check_feature_manifest.py" \

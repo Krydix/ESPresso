@@ -107,6 +107,7 @@ make test
 make test-cups
 make test-compat
 make test-sanitize
+make test-fuzz-smoke
 make test-roadmap
 make test-conformance-report
 make build
@@ -125,8 +126,9 @@ adds a stateful host-native legacy-printer emulator around the same codec and re
 policy used by the firmware, then runs CUPS semantic comparisons, RFC edge cases,
 multi-step job flows, exact 1 MiB document relays, IPP/1.1 fallback, chunked legacy
 responses, legacy attribute aliases, DNS-SD recovery, and malformed-response
-rejection. `test-conformance-report` requires the complete CUPS IPP/1.1 suite to pass
-and records IPP/2.0 and IPP Everywhere expected failures as a CI artifact.
+rejection. `test-fuzz-smoke` runs a sanitizer-coverage-guided bounded IPP/profile
+fuzzer. `test-conformance-report` requires the complete CUPS IPP/1.1 and IPP/2.0
+suites to pass and records the broader IPP Everywhere expected failure as a CI artifact.
 `test-roadmap` validates [the feature matrix](tests/feature-matrix.json) and executes
 the next-phase expected-failure probes, failing when an outcome changes without the
 matrix being promoted.
@@ -187,9 +189,16 @@ spooling, or a signed compatibility database. ESPresso can derive basic
 media-size collections from PWG self-describing names, but margins, sources, finishings,
 and live printer/job state remain the old printer's responsibility.
 
-Incoming IPP requests currently need a `Content-Length`; ESP-IDF's HTTP server rejects
-chunked request bodies before the application handler. Document data itself remains
-streamed and can be much larger than RAM.
+Incoming IPP requests may use either `Content-Length` or chunked transfer encoding.
+Because ESP-IDF's standard HTTP server rejects chunked request bodies, port 631 uses a
+small bounded socket parser and re-chunks document jobs toward the legacy printer.
+Document data remains streamed in 4 KiB pieces and can be much larger than RAM. A
+legacy endpoint that rejects chunked uploads would require spooling and is not supported.
+This is a known edge case in non-conforming embedded HTTP implementations, even though
+IPP/1.1 has required servers to accept chunked requests since 2000. It can be diagnosed
+without printing by running the same harmless `Get-Printer-Attributes` request through
+`ipptool -C` and `ipptool -L`; success with `-L` but failure with `-C` identifies the
+incompatibility. See [the compatibility boundary](docs/embedded-cups-subset.md#upstream-chunking-edge-case).
 
 ## Design references
 

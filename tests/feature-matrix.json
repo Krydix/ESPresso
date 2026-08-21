@@ -69,13 +69,20 @@
     {
       "id": "live-mdns-integration",
       "title": "A published facade is discoverable with ippfind/Avahi",
-      "status": "expected-fail",
+      "status": "hardware-required",
       "phase": 2,
-      "plannedTarget": "make test-dnssd-integration",
-      "acceptance": [
-        "Discovery exposes rp, pdl, URF, UUID, Color, Duplex, and _universal",
-        "Service name collisions remain discoverable",
-        "Stopping the service withdraws it"
+      "reason": "Only the ESP-IDF mDNS implementation on a real interface can prove multicast publication and withdrawal"
+    },
+    {
+      "id": "dnssd-republish-identity",
+      "title": "DNS-SD identities avoid same-label collisions and republish after reconnect",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test && make build",
+      "evidence": [
+        "main/printer_advertisement.c",
+        "main/printer_discovery.c",
+        "tests/test_printer_advertisement.c"
       ]
     },
     {
@@ -89,35 +96,42 @@
     {
       "id": "full-ipp20-conformance",
       "title": "All applicable CUPS IPP/2.0 conformance tests pass",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-conformance-report",
-      "acceptance": [
-        "Required IPP/2.0 description and job-template attributes are truthful",
-        "No unsupported operation is advertised"
+      "target": "make test-conformance-report",
+      "evidence": [
+        "main/ipp_codec.c",
+        "tests/test_ipp_codec.c",
+        "tests/compat/compat_lab.py"
       ]
     },
     {
       "id": "incoming-chunked-http",
       "title": "Chunked client request bodies stream through the ESP HTTP endpoint",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-http-roadmap",
-      "acceptance": [
-        "ipptool -C Print-Job succeeds",
-        "Peak buffering stays bounded independently of document size"
+      "target": "make test && make test-compat && make test-roadmap",
+      "evidence": [
+        "main/ipp_http_request.c",
+        "main/ipp_proxy.c",
+        "main/ipp_stream.c",
+        "tests/test_ipp_http_request.c",
+        "tests/test_ipp_stream.c",
+        "tests/compat/compat_lab.py"
       ]
     },
     {
       "id": "transport-faults",
       "title": "Short reads/writes, timeouts, disconnects, and response size limits are deterministic",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-transport",
-      "acceptance": [
-        "Document bytes are neither duplicated nor dropped under short I/O",
-        "Non-idempotent jobs are never retried after ambiguous delivery",
-        "Timeout and size-limit failures return stable gateway errors"
+      "target": "make test && make test-sanitize && make test-compat",
+      "evidence": [
+        "main/ipp_proxy_core.c",
+        "main/ipp_stream.c",
+        "tests/test_ipp_proxy_core.c",
+        "tests/test_ipp_stream.c",
+        "tests/compat/fixtures/malformed-truncated.json"
       ]
     },
     {
@@ -142,6 +156,32 @@
       ]
     },
     {
+      "id": "job-response-filtering",
+      "title": "Get-Jobs and Get-Job-Attributes honor exact and group requested-attributes selectors",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test && make test-compat",
+      "evidence": [
+        "main/ipp_codec.c",
+        "main/ipp_proxy.c",
+        "tests/test_ipp_codec.c",
+        "tests/compat/job-requested-attributes.test"
+      ]
+    },
+    {
+      "id": "facade-owned-job-defaults",
+      "title": "Conservative IPP 2.0 defaults are consumed or translated before legacy relay",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test && make test-compat && make test-conformance-report",
+      "evidence": [
+        "main/ipp_codec.c",
+        "tests/test_ipp_codec.c",
+        "tests/compat/facade-defaults.test",
+        "tests/compat/legacy-output-mode.test"
+      ]
+    },
+    {
       "id": "cups-differential-queue",
       "title": "cupsd/cups-browsed and ESPresso normalize captured legacy printers equivalently",
       "status": "expected-fail",
@@ -155,12 +195,12 @@
     {
       "id": "fuzz-ipp-and-profiles",
       "title": "IPP messages and captured printer profiles survive coverage-guided fuzzing",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-fuzz-smoke",
-      "acceptance": [
-        "No sanitizer findings on the checked corpus",
-        "Allocation and input-size bounds are asserted"
+      "target": "make test-fuzz-smoke",
+      "evidence": [
+        "tests/fuzz_ipp_codec.c",
+        "main/ipp_codec.c"
       ]
     },
     {
@@ -219,6 +259,13 @@
       "status": "out-of-scope",
       "phase": 0,
       "reason": "ESPresso is a bounded streaming compatibility relay, not a print scheduler"
+    },
+    {
+      "id": "chunked-content-length-fallback",
+      "title": "Fallback for non-conforming legacy printers that reject chunked document uploads",
+      "status": "out-of-scope",
+      "phase": 0,
+      "reason": "An unknown-length client stream cannot be sent with Content-Length without storing the complete document"
     }
   ]
 }

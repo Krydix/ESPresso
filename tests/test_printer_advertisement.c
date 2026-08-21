@@ -38,7 +38,8 @@ static void test_builds_truthful_airprint_record(void)
     assert(strcmp(ESPRESSO_DNSSD_SERVICE, "_ipp") == 0);
     assert(strcmp(ESPRESSO_DNSSD_PROTOCOL, "_tcp") == 0);
     assert(strcmp(ESPRESSO_DNSSD_SUBTYPE, "_universal") == 0);
-    assert(strcmp(advertisement.instance, "ESPresso - TestCo Legacy 500") == 0);
+    assert(strcmp(advertisement.instance,
+                  "ESPresso - TestCo Legacy 500 (uuid)") == 0);
     assert(strcmp(value_for(items, count, "rp"), "ipp/print") == 0);
     assert(strcmp(value_for(items, count, "pdl"), target.pdl) == 0);
     assert(strcmp(value_for(items, count, "URF"), target.urf) == 0);
@@ -49,6 +50,21 @@ static void test_builds_truthful_airprint_record(void)
     assert(strcmp(value_for(items, count, "printer-state"), "4") == 0);
     assert(strcmp(value_for(items, count, "UUID"), "bridge-test-uuid") == 0);
     assert(strcmp(value_for(items, count, "note"), "Studio") == 0);
+}
+
+static void test_bridge_identity_avoids_service_name_collisions(void)
+{
+    printer_target_t target = {0};
+    snprintf(target.label, sizeof(target.label), "Shared Printer");
+    printer_advertisement_t first;
+    printer_advertisement_t second;
+    printer_advertisement_build(
+        &target, "00000000-0000-4000-8000-00000000a123", &first);
+    printer_advertisement_build(
+        &target, "00000000-0000-4000-8000-00000000b456", &second);
+    assert(strcmp(first.instance, second.instance) != 0);
+    assert(strstr(first.instance, "(a123)") != NULL);
+    assert(strstr(second.instance, "(b456)") != NULL);
 }
 
 static void test_uses_conservative_defaults(void)
@@ -74,6 +90,7 @@ int main(void)
 {
     test_builds_truthful_airprint_record();
     test_uses_conservative_defaults();
+    test_bridge_identity_avoids_service_name_collisions();
     puts("DNS-SD advertisement tests passed");
     return 0;
 }

@@ -21,6 +21,7 @@ make test
 make test-cups
 make test-compat
 make test-sanitize
+make test-fuzz-smoke
 make test-roadmap
 make test-conformance-report
 ```
@@ -40,18 +41,24 @@ For each JSON fixture the lab:
 5. canonicalizes CUPS plist output and compares relay-exact and normalized attributes;
 6. exercises unique job IDs, document attachment, completion, cancellation,
    unknown-job errors, the supported job lifecycle, and local error responses;
-7. verifies small and 1 MiB URF documents arrive byte-for-byte unchanged;
+7. verifies small and 1 MiB URF documents arrive byte-for-byte unchanged using
+   both Content-Length and CUPS `ipptool -C` chunked requests;
 8. runs selected RFC 8011 malformed-request tests; and
 9. requires the stock CUPS `get-printer-attributes.test`,
    `get-printer-description-attributes.test`, and
    `get-job-template-attributes.test` suites to accept the facade;
 10. executes the same transport-independent request policy and short-I/O stream pump
     compiled into the firmware; and
-11. gates the complete CUPS IPP/1.1 suite.
+11. verifies job-response filtering, facade-owned defaults and legacy color-mode
+    request translation; and
+12. gates the complete CUPS IPP/1.1 and IPP/2.0 suites.
 
 Current fixtures cover a normal IPP/2.0 AirPrint printer, IPP/2.0 rejection with 1.1
-fallback, old `output-mode-*` color attributes, URF recovery from DNS-SD, fragmented
-chunked upstream HTTP responses, and a truncated IPP response that must be rejected.
+fallback, old `output-mode-*` color attributes, URF recovery from DNS-SD, chunked
+client requests and fragmented chunked upstream HTTP responses, and a truncated IPP
+response that must be rejected. The job suites additionally force over-reporting
+legacy responses, reject leaked facade-only defaults and require modern color-mode
+requests to translate to the older spelling.
 
 ## Red–green contract
 
@@ -61,16 +68,15 @@ Supported entries name their executable evidence. Expected failures name their f
 target and acceptance criteria.
 
 `make test-roadmap` executes the nearest expected-red behavior while keeping the main
-CI result green: incoming chunked client requests must still fail in their known way,
-while format-conditioned media queries and RFC requested-attribute group selectors
-must pass. An unexpected pass or regression fails the runner so the matrix cannot
-silently become stale.
+CI result green. Chunked client requests, format-conditioned media queries and RFC
+requested-attribute group selectors must pass. An unexpected pass or regression
+fails the runner so the matrix cannot silently become stale.
 
 `make test-conformance-report` runs CUPS `ipp-1.1.test`, `ipp-2.0.test`, and
-`ipp-everywhere.test` with continue-on-error reporting. IPP/1.1 is a required green
-gate. IPP/2.0 and IPP Everywhere remain expected red because their mandatory
-description attributes, formats, and operations extend beyond the truthful Phase 1
-relay contract. CI uploads the JSON reports for both Linux and macOS CUPS.
+`ipp-everywhere.test` with continue-on-error reporting. IPP/1.1 and IPP/2.0 are
+required green gates. IPP Everywhere remains expected red because it requires formats
+and operations beyond the truthful AirPrint relay contract. CI uploads the JSON
+reports for both Linux and macOS CUPS.
 
 ## Fixture contract
 

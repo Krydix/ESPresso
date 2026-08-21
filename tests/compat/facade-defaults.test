@@ -1,0 +1,27 @@
+{
+  NAME "Facade-owned neutral IPP 2.0 defaults do not leak upstream"
+  OPERATION Validate-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR mimeMediaType document-format image/urf
+  GROUP job-attributes-tag
+  ATTR enum finishings 3
+  ATTR enum orientation-requested 3
+  ATTR keyword output-bin face-down
+  ATTR enum print-quality 4
+  STATUS successful-ok
+}
+{
+  NAME "Unsupported value outside the facade contract is rejected locally"
+  OPERATION Validate-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR mimeMediaType document-format image/urf
+  GROUP job-attributes-tag
+  ATTR enum finishings 4
+  STATUS client-error-attributes-or-values-not-supported
+}

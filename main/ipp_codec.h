@@ -11,6 +11,7 @@ typedef enum {
     IPP_CODEC_INCOMPLETE,
     IPP_CODEC_MALFORMED,
     IPP_CODEC_NO_MEMORY,
+    IPP_CODEC_UNSUPPORTED,
 } ipp_codec_result_t;
 
 typedef enum {
@@ -33,6 +34,7 @@ enum {
     IPP_STATUS_SUCCESSFUL_OK = 0x0000,
     IPP_STATUS_CLIENT_ERROR_BAD_REQUEST = 0x0400,
     IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED = 0x040a,
+    IPP_STATUS_CLIENT_ERROR_ATTRIBUTES_OR_VALUES = 0x040b,
     IPP_STATUS_CLIENT_ERROR_CHARSET_NOT_SUPPORTED = 0x040d,
     IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED = 0x0501,
     IPP_STATUS_SERVER_ERROR_SERVICE_UNAVAILABLE = 0x0502,
@@ -64,6 +66,21 @@ ipp_codec_result_t ipp_codec_rewrite(
     size_t input_length,
     const char *printer_uri,
     const char *uri_authority,
+    uint8_t **output,
+    size_t *output_length,
+    size_t *attributes_length);
+
+/*
+ * Rewrite a client request and consume facade-owned neutral defaults that an
+ * older target never advertised. Legacy output-mode is translated back from
+ * modern print-color-mode when necessary.
+ */
+ipp_codec_result_t ipp_codec_rewrite_request(
+    const uint8_t *input,
+    size_t input_length,
+    const char *printer_uri,
+    const char *uri_authority,
+    const printer_target_t *target,
     uint8_t **output,
     size_t *output_length,
     size_t *attributes_length);

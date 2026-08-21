@@ -1,0 +1,72 @@
+{
+  NAME "Create a pending job for job response filtering"
+  OPERATION Create-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR name requesting-user-name espresso-filter-test
+  ATTR name job-name Filtered-Job
+  ATTR mimeMediaType document-format image/urf
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE >0
+}
+{
+  NAME "Get-Job-Attributes honors exact requested attributes"
+  OPERATION Get-Job-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id $job-id
+  ATTR keyword requested-attributes job-id,job-state
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+  EXPECT job-state OF-TYPE enum WITH-VALUE 3
+  EXPECT !job-uri
+  EXPECT !job-name
+  EXPECT !time-at-creation
+}
+{
+  NAME "Get-Job-Attributes job-description excludes Job Template values"
+  OPERATION Get-Job-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id $job-id
+  ATTR keyword requested-attributes job-description
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+  EXPECT job-uri OF-TYPE uri
+  EXPECT job-name OF-TYPE name
+}
+{
+  NAME "Get-Jobs omitted requested-attributes returns only job-uri and job-id"
+  OPERATION Get-Jobs
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+  EXPECT job-uri OF-TYPE uri
+  EXPECT !job-name
+  EXPECT !job-state
+  EXPECT !time-at-creation
+}
+{
+  NAME "Get-Jobs honors explicit requested attributes"
+  OPERATION Get-Jobs
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes job-id,job-name,job-state
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+  EXPECT job-name OF-TYPE name WITH-VALUE Filtered-Job
+  EXPECT job-state OF-TYPE enum WITH-VALUE 3
+  EXPECT !job-uri
+  EXPECT !job-originating-user-name
+}

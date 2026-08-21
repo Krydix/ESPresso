@@ -6,6 +6,7 @@ idf_component_register(
         "improv_serial.c"
         "improv_serial_codec.c"
         "ipp_codec.c"
+        "ipp_http_request.c"
         "ipp_proxy.c"
         "ipp_proxy_core.c"
         "ipp_stream.c"

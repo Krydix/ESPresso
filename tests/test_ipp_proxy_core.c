@@ -144,12 +144,35 @@ static void test_rejects_unconvertible_formats_and_atomic_job_pairs(void)
                   IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED);
 }
 
+static void test_transport_faults_are_stable_and_never_retry_jobs(void)
+{
+    ipp_proxy_fault_policy_t policy;
+    ipp_proxy_plan_fault(IPP_PROXY_FAULT_UPSTREAM_TIMEOUT, true, &policy);
+    assert(strcmp(policy.http_status, "504 Gateway Timeout") == 0);
+    assert(strcmp(policy.message, "Legacy printer timed out") == 0);
+    assert(!policy.retry_allowed);
+
+    ipp_proxy_plan_fault(IPP_PROXY_FAULT_RESPONSE_TOO_LARGE, false, &policy);
+    assert(strcmp(policy.http_status, "502 Bad Gateway") == 0);
+    assert(strstr(policy.message, "safety limit") != NULL);
+    assert(!policy.retry_allowed);
+
+    ipp_proxy_plan_fault(IPP_PROXY_FAULT_UPSTREAM_DISCONNECT, true, &policy);
+    assert(strcmp(policy.http_status, "502 Bad Gateway") == 0);
+    assert(strstr(policy.message, "disconnected") != NULL);
+    assert(!policy.retry_allowed);
+
+    ipp_proxy_plan_fault(IPP_PROXY_FAULT_UPSTREAM_TIMEOUT, false, &policy);
+    assert(policy.retry_allowed);
+}
+
 int main(void)
 {
     test_accepts_safe_relay_and_selects_upstream_version();
     test_rejects_versions_and_required_attribute_errors();
     test_rejects_unsafe_operations_and_payload_shapes();
     test_rejects_unconvertible_formats_and_atomic_job_pairs();
+    test_transport_faults_are_stable_and_never_retry_jobs();
     puts("IPP proxy core tests passed");
     return 0;
 }

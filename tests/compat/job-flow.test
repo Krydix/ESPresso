@@ -76,13 +76,3 @@
   ATTR integer job-id $job-id
   STATUS client-error-not-possible
 }
-{
-  NAME "Unsafe Print-URI is rejected locally"
-  OPERATION Print-URI
-  GROUP operation-attributes-tag
-  ATTR charset attributes-charset utf-8
-  ATTR language attributes-natural-language en
-  ATTR uri printer-uri $uri
-  ATTR uri document-uri https://example.invalid/document.pdf
-  STATUS server-error-operation-not-supported
-}

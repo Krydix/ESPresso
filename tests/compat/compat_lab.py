@@ -41,7 +41,7 @@ class RequestInfo(ctypes.Structure):
         ("operation_attributes_valid", ctypes.c_bool),
         ("attributes_charset", ctypes.c_char * 32),
         ("document_format", ctypes.c_char * 64),
-        ("requested_attributes", ctypes.c_char * 512),
+        ("requested_attributes", ctypes.c_char * 1536),
     ]
 
 
@@ -772,6 +772,15 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
                         root / "tests/compat/rfc-core.test")
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/requested-attributes.test")
+            ios_documents_before = len(state.captured_documents)
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/ios-airprint-flow.test",
+                        version="2.0", chunked=True)
+            ios_document = (root / "tests/minimal.urf").read_bytes()
+            if len(state.captured_documents) != ios_documents_before + 1 or \
+                    state.captured_documents[-1] != ios_document:
+                raise AssertionError(
+                    f"{fixture_path.stem}: iOS-style Print-Job was not relayed intact")
             cups_data = Path(subprocess.check_output(
                 ["cups-config", "--datadir"], text=True).strip())
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",

@@ -166,6 +166,9 @@ esp_err_t printer_capabilities_probe(printer_target_t *target)
 
     uint8_t *response = NULL;
     size_t response_length = 0;
+    char discovered_pdl[ESPRESSO_PDL_MAX];
+    snprintf(discovered_pdl, sizeof(discovered_pdl), "%s", target->pdl);
+    target->pdl[0] = '\0';
     target->operations_supported = 0;
     target->printer_state = 0;
     target->accepting_jobs = false;
@@ -186,6 +189,7 @@ esp_err_t printer_capabilities_probe(printer_target_t *target)
     }
     if (err != ESP_OK || status >= 0x0400) {
         free(response);
+        snprintf(target->pdl, sizeof(target->pdl), "%s", discovered_pdl);
         ESP_LOGW(TAG, "capability query failed for %s (transport=%s, IPP=0x%04x)",
                  target->instance, esp_err_to_name(err), status);
         return err != ESP_OK ? err : ESP_FAIL;
@@ -195,10 +199,14 @@ esp_err_t printer_capabilities_probe(printer_target_t *target)
         response, response_length, target);
     free(response);
     if (codec != IPP_CODEC_OK) {
+        snprintf(target->pdl, sizeof(target->pdl), "%s", discovered_pdl);
         ESP_LOGW(TAG, "malformed capability response from %s", target->instance);
         return codec == IPP_CODEC_NO_MEMORY ? ESP_ERR_NO_MEM : ESP_FAIL;
     }
     target->capability_queried = true;
+    if (!target->pdl[0]) {
+        snprintf(target->pdl, sizeof(target->pdl), "%s", discovered_pdl);
+    }
 
     /* IPP capabilities can be conditional on document-format. Merge a bounded
      * number of exact-format responses, prioritizing URF for the AirPrint facade. */

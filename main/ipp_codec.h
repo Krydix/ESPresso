@@ -19,15 +19,25 @@ typedef enum {
     IPP_RESPONSE_KIND_JOB,
 } ipp_response_kind_t;
 
+/* Current Apple clients send capability selector lists larger than 1 KiB.
+ * Keep the complete list so response filtering cannot silently discard the
+ * selectors near the end of the request. */
+#define IPP_REQUESTED_ATTRIBUTES_MAX 1536
+
 enum {
     IPP_OPERATION_PRINT_JOB = 0x0002,
+    IPP_OPERATION_PRINT_URI = 0x0003,
     IPP_OPERATION_VALIDATE_JOB = 0x0004,
     IPP_OPERATION_CREATE_JOB = 0x0005,
     IPP_OPERATION_SEND_DOCUMENT = 0x0006,
+    IPP_OPERATION_SEND_URI = 0x0007,
     IPP_OPERATION_CANCEL_JOB = 0x0008,
     IPP_OPERATION_GET_JOB_ATTRIBUTES = 0x0009,
     IPP_OPERATION_GET_JOBS = 0x000a,
     IPP_OPERATION_GET_PRINTER_ATTRIBUTES = 0x000b,
+    IPP_OPERATION_CANCEL_MY_JOBS = 0x0039,
+    IPP_OPERATION_CLOSE_JOB = 0x003b,
+    IPP_OPERATION_IDENTIFY_PRINTER = 0x003c,
 };
 
 enum {
@@ -54,7 +64,7 @@ typedef struct {
     bool operation_attributes_valid;
     char attributes_charset[32];
     char document_format[64];
-    char requested_attributes[512];
+    char requested_attributes[IPP_REQUESTED_ATTRIBUTES_MAX];
 } ipp_request_info_t;
 
 /*
@@ -84,6 +94,21 @@ ipp_codec_result_t ipp_codec_rewrite_request(
     uint8_t **output,
     size_t *output_length,
     size_t *attributes_length);
+
+/* Also report the job-template attribute that caused an unsupported result.
+ * The diagnostic contains an attribute name only, never document data or an
+ * attribute value. */
+ipp_codec_result_t ipp_codec_rewrite_request_diagnostic(
+    const uint8_t *input,
+    size_t input_length,
+    const char *printer_uri,
+    const char *uri_authority,
+    const printer_target_t *target,
+    uint8_t **output,
+    size_t *output_length,
+    size_t *attributes_length,
+    char *rejected_attribute,
+    size_t rejected_attribute_size);
 
 /* Build the small CUPS-style Get-Printer-Attributes probe request. */
 ipp_codec_result_t ipp_codec_build_get_printer_attributes(

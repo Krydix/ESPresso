@@ -16,6 +16,7 @@
 #define IPP_TAG_INTEGER 0x21
 #define IPP_TAG_BOOLEAN 0x22
 #define IPP_TAG_ENUM 0x23
+#define IPP_TAG_OCTETSTRING 0x30
 #define IPP_TAG_RESOLUTION 0x32
 #define IPP_TAG_RANGE 0x33
 #define IPP_TAG_BEGIN_COLLECTION 0x34
@@ -88,6 +89,16 @@ typedef uint64_t present_attribute_t;
 #define PRESENT_SIDES_DEFAULT (1ULL << 47)
 #define PRESENT_PAGES_PER_MINUTE (1ULL << 48)
 #define PRESENT_PAGES_PER_MINUTE_COLOR (1ULL << 49)
+#define PRESENT_MEDIA_COL_SUPPORTED (1ULL << 50)
+#define PRESENT_MEDIA_COL_READY (1ULL << 51)
+#define PRESENT_MEDIA_SOURCE_SUPPORTED (1ULL << 52)
+#define PRESENT_MEDIA_TYPE_SUPPORTED (1ULL << 53)
+#define PRESENT_PRINTER_INPUT_TRAY (1ULL << 54)
+#define PRESENT_MANDATORY_JOB_ATTRIBUTES (1ULL << 55)
+#define PRESENT_PRINT_SCALING_SUPPORTED (1ULL << 56)
+#define PRESENT_PRINT_SCALING_DEFAULT (1ULL << 57)
+#define PRESENT_LANDSCAPE_PREFERRED (1ULL << 58)
+#define PRESENT_DOCUMENT_PASSWORD_SUPPORTED (1ULL << 59)
 
 static uint16_t read_u16(const uint8_t *data)
 {
@@ -375,31 +386,6 @@ static requested_group_mask_t requested_group_mask(
     return groups;
 }
 
-static void csv_remove(char *csv, size_t csv_size, const char *unwanted)
-{
-    char filtered[ESPRESSO_PDL_MAX] = {0};
-    const char *cursor = csv;
-    while (*cursor) {
-        while (*cursor == ',' || isspace((unsigned char)*cursor)) {
-            ++cursor;
-        }
-        const char *start = cursor;
-        while (*cursor && *cursor != ',') {
-            ++cursor;
-        }
-        const char *end = cursor;
-        while (end > start && isspace((unsigned char)end[-1])) {
-            --end;
-        }
-        if (end > start && !equal_span(start, (size_t)(end - start), unwanted,
-                                       strlen(unwanted))) {
-            csv_add(filtered, sizeof(filtered), (const uint8_t *)start,
-                    (size_t)(end - start));
-        }
-    }
-    snprintf(csv, csv_size, "%s", filtered);
-}
-
 static void copy_value(char *destination, size_t destination_size,
                        const uint8_t *value, size_t value_length)
 {
@@ -527,6 +513,16 @@ static uint64_t attribute_presence(const char *name)
         {"sides-default", PRESENT_SIDES_DEFAULT},
         {"pages-per-minute", PRESENT_PAGES_PER_MINUTE},
         {"pages-per-minute-color", PRESENT_PAGES_PER_MINUTE_COLOR},
+        {"media-col-supported", PRESENT_MEDIA_COL_SUPPORTED},
+        {"media-col-ready", PRESENT_MEDIA_COL_READY},
+        {"media-source-supported", PRESENT_MEDIA_SOURCE_SUPPORTED},
+        {"media-type-supported", PRESENT_MEDIA_TYPE_SUPPORTED},
+        {"printer-input-tray", PRESENT_PRINTER_INPUT_TRAY},
+        {"printer-mandatory-job-attributes", PRESENT_MANDATORY_JOB_ATTRIBUTES},
+        {"print-scaling-supported", PRESENT_PRINT_SCALING_SUPPORTED},
+        {"print-scaling-default", PRESENT_PRINT_SCALING_DEFAULT},
+        {"landscape-orientation-requested-preferred", PRESENT_LANDSCAPE_PREFERRED},
+        {"document-password-supported", PRESENT_DOCUMENT_PASSWORD_SUPPORTED},
     };
     for (size_t i = 0; i < sizeof(attributes) / sizeof(attributes[0]); ++i) {
         if (strcmp(name, attributes[i].name) == 0) {
@@ -655,6 +651,9 @@ static bool append_media_collection(byte_buffer_t *buffer, const char *attribute
                                     uint32_t width, uint32_t height)
 {
     if (!append_attribute(buffer, IPP_TAG_BEGIN_COLLECTION, attribute_name, NULL, 0) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-key") ||
+        !append_attribute(buffer, IPP_TAG_KEYWORD, NULL, media_name,
+                          media_name_length) ||
         !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-size") ||
         !append_attribute(buffer, IPP_TAG_BEGIN_COLLECTION, NULL, NULL, 0) ||
         !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "x-dimension") ||
@@ -665,6 +664,18 @@ static bool append_media_collection(byte_buffer_t *buffer, const char *attribute
         !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-size-name") ||
         !append_attribute(buffer, IPP_TAG_KEYWORD, NULL, media_name,
                           media_name_length) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-bottom-margin") ||
+        !append_i32(buffer, IPP_TAG_INTEGER, NULL, 0) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-left-margin") ||
+        !append_i32(buffer, IPP_TAG_INTEGER, NULL, 0) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-right-margin") ||
+        !append_i32(buffer, IPP_TAG_INTEGER, NULL, 0) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-top-margin") ||
+        !append_i32(buffer, IPP_TAG_INTEGER, NULL, 0) ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-source") ||
+        !append_string(buffer, IPP_TAG_KEYWORD, NULL, "main") ||
+        !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL, "media-type") ||
+        !append_string(buffer, IPP_TAG_KEYWORD, NULL, "stationery") ||
         !append_attribute(buffer, IPP_TAG_END_COLLECTION, NULL, NULL, 0)) {
         return false;
     }
@@ -842,9 +853,29 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
                                "document-format-supported", target->pdl)) {
         return false;
     }
-    if (!(present & PRESENT_FORMAT_DEFAULT) &&
-        csv_contains(target->pdl, "image/urf", strlen("image/urf")) &&
-        !append_string(buffer, IPP_TAG_MIMETYPE, "document-format-default", "image/urf")) {
+    if (!(present & PRESENT_FORMAT_DEFAULT)) {
+        const char *format_default =
+            csv_contains(target->pdl, "application/pdf",
+                         strlen("application/pdf")) ?
+                "application/pdf" :
+            csv_contains(target->pdl, "image/urf", strlen("image/urf")) ?
+                "image/urf" : NULL;
+        if (format_default &&
+            !append_string(buffer, IPP_TAG_MIMETYPE,
+                           "document-format-default", format_default)) {
+            return false;
+        }
+    }
+    /* IPP Everywhere 1.1 section 9.3 requires this Printer Description
+     * attribute whenever application/pdf is advertised. Current iOS asks for
+     * it in the full AirPrint capability probe and does not submit a job when
+     * the otherwise-PDF-capable facade omits it. The relay passes the optional
+     * document-password operation attribute through to the target. */
+    if (!(present & PRESENT_DOCUMENT_PASSWORD_SUPPORTED) &&
+        csv_contains(target->pdl, "application/pdf",
+                     strlen("application/pdf")) &&
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "document-password-supported", 1023)) {
         return false;
     }
     if (!(present & PRESENT_URF) && target->urf[0] &&
@@ -903,6 +934,65 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
             return false;
         }
     }
+    if (!(present & PRESENT_MEDIA_COL_SUPPORTED) && target->media[0]) {
+        static const char *const members[] = {
+            "media-bottom-margin", "media-key", "media-left-margin",
+            "media-right-margin", "media-size", "media-size-name",
+            "media-source", "media-top-margin", "media-type",
+        };
+        for (size_t i = 0; i < sizeof(members) / sizeof(members[0]); ++i) {
+            if (!append_string(buffer, IPP_TAG_KEYWORD,
+                               i == 0 ? "media-col-supported" : NULL,
+                               members[i])) {
+                return false;
+            }
+        }
+    }
+    if (!(present & PRESENT_MEDIA_COL_READY) && target->media_default[0]) {
+        uint32_t width = 0;
+        uint32_t height = 0;
+        size_t media_length = strlen(target->media_default);
+        if (media_dimensions(target->media_default, media_length, &width, &height) &&
+            !append_media_collection(buffer, "media-col-ready",
+                                     target->media_default, media_length,
+                                     width, height)) {
+            return false;
+        }
+    }
+    /* A single automatic source is the truthful facade for a legacy target
+     * whose IPP profile does not expose individual trays. Apple clients use
+     * these attributes for readiness checks before submitting Print-Job. */
+    if (!(present & PRESENT_MEDIA_SOURCE_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "media-source-supported", "auto")) {
+        return false;
+    }
+    if (!(present & PRESENT_MEDIA_SOURCE_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_KEYWORD, NULL, "main")) {
+        return false;
+    }
+    if (!(present & PRESENT_MEDIA_TYPE_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "media-type-supported", "stationery")) {
+        return false;
+    }
+    if (!(present & PRESENT_PRINTER_INPUT_TRAY) &&
+        !append_string(buffer, IPP_TAG_OCTETSTRING, "printer-input-tray",
+                       "type=sheetFeedAutoRemovableTray;mediafeed=0;"
+                       "mediaxfeed=0;maxcapacity=-2;level=-2;status=0;"
+                       "name=auto")) {
+        return false;
+    }
+    if (!(present & PRESENT_PRINTER_INPUT_TRAY) &&
+        !append_string(buffer, IPP_TAG_OCTETSTRING, NULL,
+                       "type=sheetFeedAutoRemovableTray;mediafeed=0;"
+                       "mediaxfeed=0;maxcapacity=250;level=100;status=0;"
+                       "name=main")) {
+        return false;
+    }
+    /* Do not invent printer-mandatory-job-attributes.  Absence means the
+     * facade has no additional mandatory Job Template attributes, matching
+     * the Apple/CUPS IPP Everywhere reference printer. */
     if (!(present & PRESENT_PRINT_COLOR_MODE)) {
         if (!append_string(buffer, IPP_TAG_KEYWORD, "print-color-mode-supported",
                            "monochrome") ||
@@ -1114,7 +1204,9 @@ static ipp_codec_result_t transform_message(
              strcmp(current_name, "operations-supported") == 0 ||
              strcmp(current_name, "printer-uuid") == 0 ||
              strcmp(current_name, "uri-authentication-supported") == 0 ||
-             strcmp(current_name, "uri-security-supported") == 0);
+             strcmp(current_name, "uri-security-supported") == 0 ||
+             strcmp(current_name, "document-format-supported") == 0 ||
+             strcmp(current_name, "document-format-default") == 0);
         if (replace_profile_value) {
             continue;
         }
@@ -1238,7 +1330,8 @@ static job_attribute_action_t facade_job_attribute_action(
 
 static ipp_codec_result_t normalize_facade_job_defaults(
     const uint8_t *input, size_t input_length, const printer_target_t *target,
-    uint8_t **output, size_t *output_length, size_t *attributes_length)
+    uint8_t **output, size_t *output_length, size_t *attributes_length,
+    char *rejected_attribute, size_t rejected_attribute_size)
 {
     if (!input || !target || !output || !output_length || !attributes_length) {
         return IPP_CODEC_MALFORMED;
@@ -1246,6 +1339,9 @@ static ipp_codec_result_t normalize_facade_job_defaults(
     *output = NULL;
     *output_length = 0;
     *attributes_length = 0;
+    if (rejected_attribute_size) {
+        rejected_attribute[0] = '\0';
+    }
     byte_buffer_t result = {0};
     if (input_length < IPP_HEADER_LENGTH) {
         return IPP_CODEC_INCOMPLETE;
@@ -1312,6 +1408,10 @@ static ipp_codec_result_t normalize_facade_job_defaults(
                 &replacement_name);
         }
         if (action == JOB_ATTRIBUTE_UNSUPPORTED) {
+            if (rejected_attribute_size) {
+                snprintf(rejected_attribute, rejected_attribute_size, "%s",
+                         current_name);
+            }
             free(result.data);
             return IPP_CODEC_UNSUPPORTED;
         }
@@ -1358,6 +1458,23 @@ ipp_codec_result_t ipp_codec_rewrite_request(
     const char *uri_authority, const printer_target_t *target,
     uint8_t **output, size_t *output_length, size_t *attributes_length)
 {
+    return ipp_codec_rewrite_request_diagnostic(
+        input, input_length, printer_uri, uri_authority, target, output,
+        output_length, attributes_length, NULL, 0);
+}
+
+ipp_codec_result_t ipp_codec_rewrite_request_diagnostic(
+    const uint8_t *input, size_t input_length, const char *printer_uri,
+    const char *uri_authority, const printer_target_t *target,
+    uint8_t **output, size_t *output_length, size_t *attributes_length,
+    char *rejected_attribute, size_t rejected_attribute_size)
+{
+    if (rejected_attribute_size && !rejected_attribute) {
+        return IPP_CODEC_MALFORMED;
+    }
+    if (rejected_attribute_size) {
+        rejected_attribute[0] = '\0';
+    }
     uint8_t *rewritten = NULL;
     size_t rewritten_length = 0;
     size_t rewritten_attributes = 0;
@@ -1369,7 +1486,7 @@ ipp_codec_result_t ipp_codec_rewrite_request(
     }
     result = normalize_facade_job_defaults(
         rewritten, rewritten_length, target, output, output_length,
-        attributes_length);
+        attributes_length, rejected_attribute, rejected_attribute_size);
     free(rewritten);
     return result;
 }
@@ -1708,11 +1825,16 @@ uint64_t ipp_codec_relay_operations(uint64_t upstream_operations)
 {
     const uint64_t individually_safe =
         (1ULL << IPP_OPERATION_PRINT_JOB) |
+        (1ULL << IPP_OPERATION_PRINT_URI) |
         (1ULL << IPP_OPERATION_VALIDATE_JOB) |
+        (1ULL << IPP_OPERATION_SEND_URI) |
         (1ULL << IPP_OPERATION_CANCEL_JOB) |
         (1ULL << IPP_OPERATION_GET_JOB_ATTRIBUTES) |
         (1ULL << IPP_OPERATION_GET_JOBS) |
-        (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
+        (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES) |
+        (1ULL << IPP_OPERATION_CANCEL_MY_JOBS) |
+        (1ULL << IPP_OPERATION_CLOSE_JOB) |
+        (1ULL << IPP_OPERATION_IDENTIFY_PRINTER);
     uint64_t relay = upstream_operations & individually_safe;
     relay |= 1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES;
     if ((upstream_operations & (1ULL << IPP_OPERATION_CREATE_JOB)) &&
@@ -1735,7 +1857,6 @@ void ipp_codec_finalize_profile(printer_target_t *target)
     if (!target) {
         return;
     }
-    csv_remove(target->pdl, sizeof(target->pdl), "application/octet-stream");
     const char *cursor = target->urf;
     while (*cursor) {
         while (*cursor == ',' || isspace((unsigned char)*cursor)) {
@@ -1854,8 +1975,7 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
         cursor += value_length;
 
         if (strcmp(current_name, "document-format-supported") == 0 &&
-            tag == IPP_TAG_MIMETYPE &&
-            !value_contains(value, value_length, "application/octet-stream")) {
+            tag == IPP_TAG_MIMETYPE) {
             csv_add_split(target->pdl, sizeof(target->pdl), value, value_length);
         } else if (strcmp(current_name, "urf-supported") == 0 &&
                    tag == IPP_TAG_KEYWORD) {

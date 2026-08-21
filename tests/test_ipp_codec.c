@@ -218,6 +218,14 @@ static void test_consumes_facade_defaults_and_translates_legacy_color(void)
                "ipp://legacy.local/ipp/print", "ipp://legacy.local", &target,
                &output, &output_length, &attributes_length) ==
            IPP_CODEC_UNSUPPORTED);
+    char rejected_attribute[32];
+    assert(ipp_codec_rewrite_request_diagnostic(
+               unsupported, unsupported_length,
+               "ipp://legacy.local/ipp/print", "ipp://legacy.local", &target,
+               &output, &output_length, &attributes_length,
+               rejected_attribute, sizeof(rejected_attribute)) ==
+           IPP_CODEC_UNSUPPORTED);
+    assert(strcmp(rejected_attribute, "finishings") == 0);
 }
 
 static void test_normalizes_frontend_ipp_version(void)
@@ -232,7 +240,7 @@ static void test_normalizes_frontend_ipp_version(void)
     printer_target_t target = {0};
     strcpy(target.instance, "Legacy printer");
     strcpy(target.label, "Legacy Printer 2000");
-    strcpy(target.pdl, "image/urf");
+    strcpy(target.pdl, "application/pdf,image/urf");
     strcpy(target.urf, "W8,SRGB24,RS600");
     strcpy(target.media, "iso_a4_210x297mm,na_letter_8.5x11in");
     strcpy(target.media_default, "iso_a4_210x297mm");
@@ -253,6 +261,19 @@ static void test_normalizes_frontend_ipp_version(void)
     assert(contains(output, output_length, "document-format-default"));
     assert(contains(output, output_length, "media-col-database"));
     assert(contains(output, output_length, "media-col-default"));
+    assert(contains(output, output_length, "media-col-supported"));
+    assert(contains(output, output_length, "media-col-ready"));
+    assert(contains(output, output_length, "media-source-supported"));
+    assert(contains(output, output_length, "media-type-supported"));
+    assert(contains(output, output_length, "printer-input-tray"));
+    assert(contains(output, output_length, "document-password-supported"));
+    assert(contains(output, output_length,
+                    "maxcapacity=250;level=100;status=0;name=main"));
+    assert(!contains(output, output_length, "printer-mandatory-job-attributes"));
+    assert(!contains(output, output_length, "print-scaling-supported"));
+    assert(!contains(output, output_length, "print-scaling-default"));
+    assert(!contains(output, output_length,
+                     "landscape-orientation-requested-preferred"));
     assert(contains(output, output_length, "print-color-mode-supported"));
     assert(contains(output, output_length, "printer-resolution-supported"));
     assert(contains(output, output_length, "finishings-default"));
@@ -564,6 +585,37 @@ static void test_inspects_setof_requested_attribute_selectors(void)
                   "printer-description,job-template,printer-state") == 0);
 }
 
+static void test_preserves_large_apple_requested_attribute_list(void)
+{
+    uint8_t message[4096] = {2, 0, 0, 11, 0, 0, 0, 21, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    length = add_attribute(message, length, 0x45, "printer-uri",
+                           "ipp://espresso.local/ipp/print");
+    for (unsigned i = 0; i < 80; ++i) {
+        char selector[24];
+        snprintf(selector, sizeof(selector), "apple-selector-%02u", i);
+        length = add_attribute(message, length, 0x44,
+                               i == 0 ? "requested-attributes" : "",
+                               selector);
+    }
+    length = add_attribute(message, length, 0x44, "", "printer-state");
+    length = add_attribute(message, length, 0x44, "",
+                           "printer-is-accepting-jobs");
+    message[length++] = 3;
+
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(message, length, &info) == IPP_CODEC_OK);
+    assert(strlen(info.requested_attributes) > 512);
+    assert(strstr(info.requested_attributes, "apple-selector-79") != NULL);
+    assert(strstr(info.requested_attributes, "printer-state") != NULL);
+    assert(strstr(info.requested_attributes,
+                  "printer-is-accepting-jobs") != NULL);
+}
+
 static void test_inspects_print_job_document(void)
 {
     uint8_t message[256] = {2, 0, 0, 2, 0, 0, 0, 91, 1};
@@ -609,7 +661,7 @@ static void test_filters_operations_and_formats(void)
     assert((relayed & (1ULL << IPP_OPERATION_PRINT_JOB)) != 0);
     assert((relayed & (1ULL << IPP_OPERATION_CANCEL_JOB)) != 0);
     assert((relayed & (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES)) != 0);
-    assert((relayed & (1ULL << 3)) == 0);
+    assert((relayed & (1ULL << IPP_OPERATION_PRINT_URI)) != 0);
     assert((relayed & (1ULL << IPP_OPERATION_CREATE_JOB)) == 0);
 
     printer_target_t target = {0};
@@ -678,8 +730,10 @@ static void test_extracts_relayable_capability_profile(void)
     assert(strcmp(target.uuid, "physical-printer") == 0);
     assert(contains((const uint8_t *)target.pdl, strlen(target.pdl), "image/urf"));
     assert(contains((const uint8_t *)target.pdl, strlen(target.pdl), "application/pdf"));
-    assert(!contains((const uint8_t *)target.pdl, strlen(target.pdl),
-                     "application/octet-stream"));
+    assert(strcmp(target.pdl,
+                  "application/octet-stream,image/urf,application/pdf") == 0);
+    assert(contains((const uint8_t *)target.pdl, strlen(target.pdl),
+                    "application/octet-stream"));
     assert(contains((const uint8_t *)target.urf, strlen(target.urf), "SRGB24"));
     assert(target.color);
     assert(target.duplex);
@@ -712,6 +766,7 @@ int main(void)
     test_expands_requested_printer_attribute_groups();
     test_keeps_job_description_and_printer_description_distinct();
     test_inspects_setof_requested_attribute_selectors();
+    test_preserves_large_apple_requested_attribute_list();
     test_builds_parseable_ipp_error();
     test_filters_operations_and_formats();
     test_extracts_relayable_capability_profile();

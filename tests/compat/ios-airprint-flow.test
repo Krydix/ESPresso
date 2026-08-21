@@ -1,0 +1,69 @@
+# Replays the two Get-Printer-Attributes shapes observed from iOS before a
+# print.  -C in compat_lab.py also makes the HTTP request bodies chunked, as in
+# the device trace.  The final Print-Job proves that the same advertised
+# facade accepts and relays the document bytes.
+{
+  NAME "iOS readiness probe exposes tray and readiness attributes"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes printer-state-reasons,media-source-supported,printer-input-tray,printer-mandatory-job-attributes
+  STATUS successful-ok
+  EXPECT printer-state-reasons OF-TYPE keyword
+  EXPECT media-source-supported OF-TYPE keyword WITH-VALUE main
+  EXPECT printer-input-tray OF-TYPE octetString
+  EXPECT printer-input-tray WITH-VALUE "/.*maxcapacity=250;level=100;status=0;name=main.*/"
+  EXPECT !printer-mandatory-job-attributes
+}
+
+{
+  NAME "Full captured iOS AirPrint capability probe remains complete"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes copies-supported,document-format-supported,document-password-supported,finishings-col-database,finishings-supported,output-bin-default,printer-output-tray,output-bin-supported,identify-actions-supported,job-account-id-supported,jpeg-features-supported,jpeg-k-octets-supported,jpeg-x-dimension-supported,jpeg-y-dimension-supported,landscape-orientation-requested-preferred,media-col-supported,media-source-supported,media-col-ready,operations-supported,pdf-k-octets-supported,print-color-mode-supported,print-quality-supported,print-scaling-supported,printer-charge-info-uri,printer-input-tray,media-type-supported,printer-mandatory-job-attributes,printer-state-reasons,sides-supported,job-presets-supported,printer-more-info,printer-supply-info-uri,printer-strings-uri
+  STATUS successful-ok
+  EXPECT copies-supported OF-TYPE rangeOfInteger
+  EXPECT document-format-supported OF-TYPE mimeMediaType
+  EXPECT document-password-supported OF-TYPE integer WITH-VALUE 1023
+  EXPECT finishings-supported OF-TYPE enum
+  EXPECT output-bin-default OF-TYPE keyword
+  EXPECT output-bin-supported OF-TYPE keyword
+  EXPECT media-col-supported OF-TYPE keyword
+  EXPECT media-source-supported OF-TYPE keyword
+  EXPECT media-col-ready OF-TYPE collection
+  EXPECT operations-supported OF-TYPE enum
+  EXPECT print-color-mode-supported OF-TYPE keyword
+  EXPECT print-quality-supported OF-TYPE enum
+  EXPECT printer-input-tray OF-TYPE octetString
+  EXPECT media-type-supported OF-TYPE keyword
+  EXPECT !printer-mandatory-job-attributes
+  EXPECT printer-state-reasons OF-TYPE keyword
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT printer-more-info OF-TYPE uri
+}
+
+{
+  NAME "iOS-style chunked Print-Job is accepted and relayed"
+  OPERATION Print-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR name requesting-user-name ios-airprint-fixture
+  ATTR name job-name "iOS AirPrint regression"
+  ATTR mimeMediaType document-format image/urf
+  GROUP job-attributes-tag
+  ATTR integer copies 1
+  ATTR keyword media iso_a4_210x297mm
+  ATTR keyword print-color-mode color
+  ATTR keyword sides one-sided
+  FILE tests/minimal.urf
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE >0
+  EXPECT job-state OF-TYPE enum
+}

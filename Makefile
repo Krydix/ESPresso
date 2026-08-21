@@ -6,6 +6,7 @@ SDKCONFIG ?= $(BUILD_DIR)/sdkconfig
 IDF_PATH ?= $(HOME)/esp/esp-idf
 IDF_PYTHON_ENV_PATH ?= $(firstword $(wildcard $(HOME)/.espressif/python_env/idf5.4*_env))
 PORT ?=
+ESPRESSO_URI ?=
 WEB_INSTALLER_DIR ?= $(ROOT_DIR)/build/web-installer
 
 ifeq ($(filter $(TARGET),$(SUPPORTED_TARGETS)),)
@@ -24,7 +25,7 @@ define run_idf
 			-D SDKCONFIG="$(SDKCONFIG)" $(1)'
 endef
 
-.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-sanitize test-fuzz-smoke test-roadmap test-conformance-report web-installer web-installer-all
+.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-hardware-ios test-sanitize test-fuzz-smoke test-roadmap test-conformance-report web-installer web-installer-all
 
 help:
 	@printf '%s\n' \
@@ -36,6 +37,7 @@ help:
 		'  make test                  Run host-side IPP codec tests' \
 		'  make test-cups             Validate normalized IPP with CUPS ipptool' \
 		'  make test-compat           Run the CUPS differential compatibility lab' \
+		'  make test-hardware-ios ESPRESSO_URI=ipp://...  Replay the captured iOS flow through an ESP' \
 		'  make test-sanitize         Run codec tests with ASan and UBSan' \
 		'  make test-fuzz-smoke       Run the coverage-guided IPP codec fuzz gate' \
 		'  make test-roadmap          Validate and report the feature test matrix' \
@@ -135,6 +137,12 @@ test-compat:
 		--root "$(ROOT_DIR)" \
 		--library "$(BUILD_DIR)/host-tests/libespresso_compat.so" \
 		$(sort $(wildcard $(ROOT_DIR)/tests/compat/fixtures/*.json))
+
+test-hardware-ios:
+	@test -n "$(ESPRESSO_URI)" || { echo "set ESPRESSO_URI=ipp://<espresso-address>:631/ipp/print"; exit 1; }
+	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }
+	@ipptool -C -V 2.0 -tv "$(ESPRESSO_URI)" \
+		"$(ROOT_DIR)/tests/compat/ios-airprint-flow.test"
 
 test-sanitize:
 	@mkdir -p "$(BUILD_DIR)/host-tests"

@@ -29,6 +29,7 @@ static printer_target_t relay_target(void)
     target.upstream_ipp_minor = 1;
     target.operations_supported =
         (1ULL << IPP_OPERATION_PRINT_JOB) |
+        (1ULL << IPP_OPERATION_PRINT_URI) |
         (1ULL << IPP_OPERATION_VALIDATE_JOB) |
         (1ULL << IPP_OPERATION_CREATE_JOB) |
         (1ULL << IPP_OPERATION_SEND_DOCUMENT) |
@@ -105,9 +106,11 @@ static void test_rejects_versions_and_required_attribute_errors(void)
 static void test_rejects_unsafe_operations_and_payload_shapes(void)
 {
     printer_target_t target = relay_target();
-    ipp_request_info_t request = valid_request(0x0003);
-    assert_status(request, target, request.attributes_length,
-                  IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED);
+    ipp_request_info_t request = valid_request(IPP_OPERATION_PRINT_URI);
+    ipp_proxy_plan_t plan;
+    ipp_proxy_plan_request(&request, &target, request.attributes_length, &plan);
+    assert(plan.action == IPP_PROXY_RELAY);
+    assert(!plan.document_operation);
 
     request = valid_request(IPP_OPERATION_PRINT_JOB);
     assert_status(request, target, request.attributes_length,

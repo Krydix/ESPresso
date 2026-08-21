@@ -1,12 +1,16 @@
 #include "app_state.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "ipp_codec.h"
 #include "nvs.h"
 
+static const char *TAG = "espresso_state";
 static SemaphoreHandle_t s_lock;
 static bool s_wifi_connected;
 static char s_wifi_ssid[33];
@@ -32,9 +36,12 @@ esp_err_t app_state_init(void)
     nvs_handle_t nvs;
     esp_err_t err = nvs_open("espresso", NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGI(TAG, "no persisted printer selection");
         return ESP_OK;
     }
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "could not open persisted state: %s",
+                 esp_err_to_name(err));
         return err;
     }
 
@@ -44,14 +51,32 @@ esp_err_t app_state_init(void)
     if (err == ESP_OK && size == sizeof(s_target) &&
         s_target.profile_schema == ESPRESSO_PROFILE_SCHEMA && s_target.port != 0 &&
         s_target.address[0] != '\0') {
+        ipp_codec_finalize_profile(&s_target);
         s_has_target = true;
+        ESP_LOGI(TAG, "restored printer selection '%s' at %s:%u%s",
+                 s_target.instance, s_target.address, s_target.port,
+                 s_target.resource_path);
         return ESP_OK;
     }
+    uint32_t stored_schema = s_target.profile_schema;
     memset(&s_target, 0, sizeof(s_target));
     if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_INVALID_LENGTH ||
         (err == ESP_OK && size != sizeof(s_target))) {
+        ESP_LOGW(TAG,
+                 "discarding incompatible printer selection: read=%s size=%u expected=%u",
+                 esp_err_to_name(err), (unsigned)size,
+                 (unsigned)sizeof(s_target));
         return ESP_OK;
     }
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG,
+                 "discarding invalid printer selection: schema=%" PRIu32
+                 " expected=%u",
+                 stored_schema, (unsigned)ESPRESSO_PROFILE_SCHEMA);
+        return ESP_OK;
+    }
+    ESP_LOGE(TAG, "could not read persisted printer selection: %s",
+             esp_err_to_name(err));
     return err;
 }
 
@@ -97,6 +122,12 @@ esp_err_t app_state_set_target(const printer_target_t *target)
         s_target = *target;
         s_has_target = true;
         xSemaphoreGive(s_lock);
+        ESP_LOGI(TAG, "persisted printer selection '%s' at %s:%u%s",
+                 target->instance, target->address, target->port,
+                 target->resource_path);
+    } else {
+        ESP_LOGE(TAG, "could not persist printer selection: %s",
+                 esp_err_to_name(err));
     }
     return err;
 }
@@ -110,6 +141,7 @@ esp_err_t app_state_update_target(const printer_target_t *target)
     s_target = *target;
     s_has_target = true;
     xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "updated in-memory printer profile '%s'", target->instance);
     return ESP_OK;
 }
 
@@ -144,6 +176,7 @@ esp_err_t app_state_clear_target(void)
         memset(&s_target, 0, sizeof(s_target));
         s_has_target = false;
         xSemaphoreGive(s_lock);
+        ESP_LOGW(TAG, "printer selection explicitly cleared");
     }
     return err;
 }

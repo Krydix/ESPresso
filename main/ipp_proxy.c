@@ -21,6 +21,7 @@
 #include "ipp_http_request.h"
 #include "ipp_proxy_core.h"
 #include "ipp_stream.h"
+#include "lwip/inet.h"
 #include "printer_discovery.h"
 #include "printer_identity.h"
 
@@ -29,10 +30,10 @@
 #define STREAM_CHUNK 4096
 #define RECEIVE_TIMEOUT_RETRIES 3
 #define IPP_SERVER_PORT 631
-#define IPP_SERVER_BACKLOG 4
+#define IPP_SERVER_BACKLOG 12
 #define IPP_SERVER_WORKERS 2
 #define IPP_SERVER_TASK_STACK 4096
-#define IPP_WORKER_TASK_STACK 8192
+#define IPP_WORKER_TASK_STACK 10240
 
 static const char *TAG = "espresso_proxy";
 static SemaphoreHandle_t worker_slots;
@@ -40,7 +41,63 @@ static SemaphoreHandle_t worker_slots;
 typedef struct {
     int socket_fd;
     ipp_http_request_t *request;
+    char peer[64];
 } ipp_connection_t;
+
+static const char *operation_name(uint16_t operation_id)
+{
+    switch (operation_id) {
+        case IPP_OPERATION_PRINT_JOB:
+            return "Print-Job";
+        case IPP_OPERATION_PRINT_URI:
+            return "Print-URI";
+        case IPP_OPERATION_VALIDATE_JOB:
+            return "Validate-Job";
+        case IPP_OPERATION_CREATE_JOB:
+            return "Create-Job";
+        case IPP_OPERATION_SEND_DOCUMENT:
+            return "Send-Document";
+        case IPP_OPERATION_SEND_URI:
+            return "Send-URI";
+        case IPP_OPERATION_CANCEL_JOB:
+            return "Cancel-Job";
+        case IPP_OPERATION_GET_JOB_ATTRIBUTES:
+            return "Get-Job-Attributes";
+        case IPP_OPERATION_GET_JOBS:
+            return "Get-Jobs";
+        case IPP_OPERATION_GET_PRINTER_ATTRIBUTES:
+            return "Get-Printer-Attributes";
+        case IPP_OPERATION_CANCEL_MY_JOBS:
+            return "Cancel-My-Jobs";
+        case IPP_OPERATION_CLOSE_JOB:
+            return "Close-Job";
+        case IPP_OPERATION_IDENTIFY_PRINTER:
+            return "Identify-Printer";
+        default:
+            return "Unknown";
+    }
+}
+
+static void format_peer(int socket_fd, char *output, size_t output_size)
+{
+    struct sockaddr_storage peer;
+    socklen_t peer_length = sizeof(peer);
+    char address[INET6_ADDRSTRLEN] = "unknown";
+    uint16_t port = 0;
+    if (getpeername(socket_fd, (struct sockaddr *)&peer, &peer_length) == 0) {
+        if (peer.ss_family == AF_INET) {
+            const struct sockaddr_in *peer4 = (const struct sockaddr_in *)&peer;
+            inet_ntop(AF_INET, &peer4->sin_addr, address, sizeof(address));
+            port = ntohs(peer4->sin_port);
+        } else if (peer.ss_family == AF_INET6) {
+            const struct sockaddr_in6 *peer6 =
+                (const struct sockaddr_in6 *)&peer;
+            inet_ntop(AF_INET6, &peer6->sin6_addr, address, sizeof(address));
+            port = ntohs(peer6->sin6_port);
+        }
+    }
+    snprintf(output, output_size, "%s:%u", address, port);
+}
 
 static void format_host(const char *address, char *host, size_t host_size)
 {
@@ -118,7 +175,7 @@ static esp_err_t send_ipp_status(ipp_connection_t *connection,
                                "Could not build IPP response");
     }
     esp_err_t err = send_http_response(connection, "200 OK", "application/ipp",
-                                       response, response_length, true);
+                                       response, response_length, false);
     free(response);
     return err;
 }
@@ -321,6 +378,8 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
 {
     printer_target_t target;
     if (!app_state_get_target(&target)) {
+        ESP_LOGW(TAG, "client %s rejected: no selected printer",
+                 connection->peer);
         send_http_error(connection, "503 Service Unavailable",
                         "Select a printer at http://espresso.local first");
         return ESP_FAIL;
@@ -405,15 +464,35 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
                                      : ipp_http_request_content_length(
                                            connection->request);
 
+    ESP_LOGI(TAG,
+             "client %s IPP %u.%u %s(0x%04x) id=%" PRIu32
+             " transport=%s body=%zu attributes=%zu format=%s",
+             connection->peer, request_info.major, request_info.minor,
+             operation_name(request_info.operation_id),
+             request_info.operation_id, request_info.request_id,
+             incoming_chunked ? "chunked" : "content-length",
+             request_body_length, attributes_length,
+             request_info.document_format[0] ? request_info.document_format :
+                                               "unspecified");
+    if (request_info.operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
+        ESP_LOGI(TAG, "client %s requested printer attributes: %s",
+                 connection->peer,
+                 request_info.requested_attributes[0] ?
+                     request_info.requested_attributes : "all");
+    }
+
     ipp_proxy_plan_t plan;
     ipp_proxy_plan_request(&request_info, &target,
                            request_body_length, &plan);
     if (plan.action == IPP_PROXY_LOCAL_STATUS) {
-        ipp_request_info_t response_info = request_info;
-        response_info.major = plan.response_major;
-        response_info.minor = plan.response_minor;
+        ESP_LOGW(TAG,
+                 "client %s %s rejected locally: IPP status=0x%04x reason=%s",
+                 connection->peer, operation_name(request_info.operation_id),
+                 plan.status_code, plan.status_message);
+        request_info.major = plan.response_major;
+        request_info.minor = plan.response_minor;
         free(prefix);
-        return send_ipp_status(connection, &response_info, plan.status_code,
+        return send_ipp_status(connection, &request_info, plan.status_code,
                                plan.status_message);
     }
     bool document_operation = plan.document_operation;
@@ -433,11 +512,18 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     uint8_t *rewritten_prefix = NULL;
     size_t rewritten_length = 0;
     if (request_info.operation_id != IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
-        codec_result = ipp_codec_rewrite_request(
+        char rejected_attribute[128] = {0};
+        codec_result = ipp_codec_rewrite_request_diagnostic(
             prefix, prefix_length, upstream_printer_uri, upstream_authority,
             &target, &rewritten_prefix, &rewritten_length,
-            &attributes_length);
+            &attributes_length, rejected_attribute,
+            sizeof(rejected_attribute));
         if (codec_result != IPP_CODEC_OK) {
+            ESP_LOGW(TAG,
+                     "client %s %s rewrite rejected: codec=%d attribute=%s",
+                     connection->peer,
+                     operation_name(request_info.operation_id), codec_result,
+                     rejected_attribute[0] ? rejected_attribute : "unknown");
             free(prefix);
             return send_ipp_status(connection, &request_info,
                                    codec_result == IPP_CODEC_UNSUPPORTED ?
@@ -511,6 +597,12 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     esp_http_client_set_header(client, "Accept", "application/ipp");
     esp_http_client_set_header(client, "User-Agent", "ESPresso/phase1");
 
+    ESP_LOGI(TAG,
+             "client %s forwarding %s as IPP %u.%u to %s transport=%s",
+             connection->peer, operation_name(operation_id), upstream_major,
+             upstream_minor, upstream_url,
+             outgoing_chunked ? "chunked" : "content-length");
+
     esp_err_t err = esp_http_client_open(
         client, outgoing_chunked ? -1 : (int)outgoing_length);
     if (err == ESP_OK) {
@@ -556,6 +648,10 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     err = read_upstream_response(client, &response_body, &response_length);
     esp_http_client_cleanup(client);
     if (err != ESP_OK || response_length < 8) {
+        ESP_LOGE(TAG,
+                 "client %s %s upstream response invalid: result=%s bytes=%zu",
+                 connection->peer, operation_name(operation_id),
+                 esp_err_to_name(err), response_length);
         free(response_body);
         ipp_proxy_fault_t fault = IPP_PROXY_FAULT_INVALID_RESPONSE;
         if (err == ESP_ERR_TIMEOUT) {
@@ -571,11 +667,17 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
 
     uint8_t *client_response = NULL;
     size_t client_response_length = 0;
+    uint16_t upstream_ipp_status =
+        (uint16_t)(((uint16_t)response_body[2] << 8) | response_body[3]);
+    ESP_LOGI(TAG,
+             "client %s %s upstream response: HTTP=%d IPP=0x%04x bytes=%zu",
+             connection->peer, operation_name(operation_id), status,
+             upstream_ipp_status, response_length);
     const char *local_printer_uri = "ipp://espresso.local:631/ipp/print";
     const char *local_authority = "ipp://espresso.local:631";
     if (operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
         char local_uuid[ESPRESSO_UUID_MAX];
-        printer_identity_uuid(local_uuid, sizeof(local_uuid));
+        printer_identity_target_uuid(&target, local_uuid, sizeof(local_uuid));
         printer_target_t updated = target;
         updated.state_reasons[0] = '\0';
         if (ipp_codec_apply_printer_attributes(response_body, response_length,
@@ -625,6 +727,8 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     }
     free(response_body);
     if (codec_result != IPP_CODEC_OK) {
+        ESP_LOGE(TAG, "client %s %s response translation failed: codec=%d",
+                 connection->peer, operation_name(operation_id), codec_result);
         free(client_response);
         send_http_error(connection, "502 Bad Gateway",
                         "Could not translate the printer response");
@@ -633,7 +737,12 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     client_response[0] = client_major;
     client_response[1] = client_minor;
     err = send_http_response(connection, "200 OK", "application/ipp",
-                             client_response, client_response_length, true);
+                             client_response, client_response_length, false);
+    ESP_LOGI(TAG,
+             "client %s %s completed: result=%s response-bytes=%zu received-body=%zu",
+             connection->peer, operation_name(operation_id),
+             esp_err_to_name(err), client_response_length,
+             ipp_http_request_decoded_length(connection->request));
     free(client_response);
     return err;
 }
@@ -660,16 +769,22 @@ static void ipp_worker_task(void *argument)
         .socket_fd = (int)(intptr_t)argument,
         .request = NULL,
     };
+    format_peer(connection.socket_fd, connection.peer,
+                sizeof(connection.peer));
     ipp_http_result_t result = ipp_http_request_open(
         receive_socket, (void *)(intptr_t)connection.socket_fd,
         &connection.request);
     if (result != IPP_HTTP_OK) {
+        ESP_LOGW(TAG, "client %s HTTP request rejected: parser=%d",
+                 connection.peer, result);
         send_http_error(&connection, result == IPP_HTTP_TOO_LARGE
                                          ? "413 Content Too Large"
                                          : "400 Bad Request",
                         "Malformed or unsupported HTTP request");
     } else if (strcasecmp(ipp_http_request_method(connection.request),
                           "POST") != 0) {
+        ESP_LOGW(TAG, "client %s HTTP method rejected: %s", connection.peer,
+                 ipp_http_request_method(connection.request));
         send_http_error(&connection, "405 Method Not Allowed",
                         "The IPP endpoint accepts POST requests");
     } else {
@@ -686,26 +801,22 @@ static void ipp_accept_task(void *argument)
 {
     int listen_fd = (int)(intptr_t)argument;
     while (true) {
+        /* Reserve capacity before accept(). Excess Apple capability probes
+         * remain in the TCP backlog instead of receiving a transient 503 or
+         * consuming heap needed by active upstream connections. */
+        if (xSemaphoreTake(worker_slots, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
         struct sockaddr_storage address;
         socklen_t address_length = sizeof(address);
         int client_fd = accept(listen_fd, (struct sockaddr *)&address,
                                &address_length);
         if (client_fd < 0) {
+            xSemaphoreGive(worker_slots);
             ESP_LOGE(TAG, "IPP accept failed: errno %d", errno);
             continue;
         }
         configure_client_socket(client_fd);
-        if (xSemaphoreTake(worker_slots, 0) != pdTRUE) {
-            ipp_connection_t busy = {
-                .socket_fd = client_fd,
-                .request = NULL,
-            };
-            send_http_error(&busy, "503 Service Unavailable",
-                            "ESPresso is processing other print requests");
-            shutdown(client_fd, SHUT_RDWR);
-            close(client_fd);
-            continue;
-        }
         if (xTaskCreate(ipp_worker_task, "espresso_ipp_client",
                         IPP_WORKER_TASK_STACK, (void *)(intptr_t)client_fd, 5,
                         NULL) != pdPASS) {
@@ -761,7 +872,9 @@ esp_err_t ipp_proxy_start(void)
         close(listen_fd);
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "IPP compatibility endpoint listening on port %d",
-             IPP_SERVER_PORT);
+    ESP_LOGI(TAG,
+             "IPP compatibility endpoint listening on port %d (%d workers, "
+             "%d-socket lwIP table)",
+             IPP_SERVER_PORT, IPP_SERVER_WORKERS, CONFIG_LWIP_MAX_SOCKETS);
     return ESP_OK;
 }

@@ -20,7 +20,16 @@ static SemaphoreHandle_t s_lock;
 static printer_target_t s_printers[ESPRESSO_PRINTER_MAX];
 static size_t s_printer_count;
 static bool s_mdns_ready;
+static bool s_ipp_advertised;
 static char s_service_instance[64];
+static printer_advertisement_t s_advertisement;
+/* Schema-4 profiles and their DNS-SD projection do not fit together on the
+ * 3.5 KiB ESP main-task stack. Access is serialized by s_lock. */
+static printer_target_t s_advertisement_target;
+static printer_advertisement_t s_pending_advertisement;
+static char s_advertisement_uuid[ESPRESSO_UUID_MAX];
+static printer_txt_item_t s_generic_txt[ESPRESSO_DNSSD_TXT_MAX];
+static mdns_txt_item_t s_mdns_txt[ESPRESSO_DNSSD_TXT_MAX];
 
 static void copy_text(char *destination, size_t destination_size,
                       const char *source, size_t source_length)
@@ -180,9 +189,12 @@ esp_err_t printer_discovery_init(void)
     ESP_RETURN_ON_ERROR(mdns_service_add("ESPresso setup", "_http", "_tcp", 80,
                                          http_txt, 1),
                         TAG, "HTTP service failed");
-    s_mdns_ready = true;
     refresh_saved_address();
-    return printer_discovery_advertise_selected();
+    esp_err_t err = printer_discovery_advertise_selected();
+    if (err == ESP_OK) {
+        s_mdns_ready = true;
+    }
+    return err;
 }
 
 esp_err_t printer_discovery_scan(void)
@@ -281,48 +293,101 @@ esp_err_t printer_discovery_select(size_t index)
 esp_err_t printer_discovery_clear_selection(void)
 {
     ESP_RETURN_ON_ERROR(app_state_clear_target(), TAG, "printer clear failed");
-    if (mdns_service_exists("_ipp", "_tcp", NULL)) {
-        return mdns_service_remove("_ipp", "_tcp");
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    if (s_ipp_advertised) {
+        err = mdns_service_remove(ESPRESSO_DNSSD_SERVICE,
+                                  ESPRESSO_DNSSD_PROTOCOL);
+        if (err == ESP_OK || err == ESP_ERR_NOT_FOUND) {
+            s_ipp_advertised = false;
+            s_service_instance[0] = '\0';
+            memset(&s_advertisement, 0, sizeof(s_advertisement));
+            err = ESP_OK;
+        }
     }
-    return ESP_OK;
+    xSemaphoreGive(s_lock);
+    return err;
 }
 
-esp_err_t printer_discovery_advertise_selected(void)
+static esp_err_t advertise_selected_locked(void)
 {
-    printer_target_t target;
-    if (!app_state_get_target(&target)) {
+    if (!app_state_get_target(&s_advertisement_target)) {
         return ESP_OK;
     }
-    if (mdns_service_exists("_ipp", "_tcp", NULL)) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(mdns_service_remove("_ipp", "_tcp"));
+
+    printer_identity_target_uuid(&s_advertisement_target,
+                                 s_advertisement_uuid,
+                                 sizeof(s_advertisement_uuid));
+    printer_advertisement_build(&s_advertisement_target,
+                                s_advertisement_uuid,
+                                &s_pending_advertisement);
+    size_t txt_count = printer_advertisement_txt(
+        &s_pending_advertisement, s_generic_txt, ESPRESSO_DNSSD_TXT_MAX);
+    for (size_t i = 0; i < txt_count; ++i) {
+        s_mdns_txt[i].key = s_generic_txt[i].key;
+        s_mdns_txt[i].value = s_generic_txt[i].value;
     }
 
-    char uuid[ESPRESSO_UUID_MAX];
-    printer_identity_uuid(uuid, sizeof(uuid));
-    printer_advertisement_t advertisement;
-    printer_advertisement_build(&target, uuid, &advertisement);
-    snprintf(s_service_instance, sizeof(s_service_instance), "%s",
-             advertisement.instance);
-    printer_txt_item_t generic_txt[ESPRESSO_DNSSD_TXT_MAX];
-    mdns_txt_item_t txt[ESPRESSO_DNSSD_TXT_MAX];
-    size_t txt_count = printer_advertisement_txt(
-        &advertisement, generic_txt, ESPRESSO_DNSSD_TXT_MAX);
-    for (size_t i = 0; i < txt_count; ++i) {
-        txt[i].key = generic_txt[i].key;
-        txt[i].value = generic_txt[i].value;
+    /* printer_discovery_init() installs the service before Wi-Fi has an IP,
+     * then printer_discovery_network_ready() refreshes it. Avoid removing and
+     * immediately re-adding an unchanged service: doing that while mDNS has
+     * scheduled answers can corrupt the component's service-answer queue. */
+    if (s_ipp_advertised &&
+        memcmp(&s_advertisement, &s_pending_advertisement,
+               sizeof(s_pending_advertisement)) == 0) {
+        ESP_LOGI(TAG, "AirPrint facade already advertised for %s",
+                 s_advertisement_target.instance);
+        return ESP_OK;
     }
+
+    if (s_ipp_advertised) {
+        if (strcmp(s_service_instance, s_pending_advertisement.instance) != 0) {
+            ESP_RETURN_ON_ERROR(mdns_service_instance_name_set(
+                                    ESPRESSO_DNSSD_SERVICE,
+                                    ESPRESSO_DNSSD_PROTOCOL,
+                                    s_pending_advertisement.instance),
+                                TAG, "IPP instance update failed");
+        }
+        ESP_RETURN_ON_ERROR(mdns_service_txt_set(ESPRESSO_DNSSD_SERVICE,
+                                                 ESPRESSO_DNSSD_PROTOCOL,
+                                                 s_mdns_txt, txt_count),
+                            TAG, "IPP TXT update failed");
+        s_advertisement = s_pending_advertisement;
+        snprintf(s_service_instance, sizeof(s_service_instance), "%s",
+                 s_pending_advertisement.instance);
+        ESP_LOGI(TAG, "updated modern AirPrint facade for %s",
+                 s_advertisement_target.instance);
+        return ESP_OK;
+    }
+
+    snprintf(s_service_instance, sizeof(s_service_instance), "%s",
+             s_pending_advertisement.instance);
     ESP_RETURN_ON_ERROR(mdns_service_add(s_service_instance,
                                          ESPRESSO_DNSSD_SERVICE,
                                          ESPRESSO_DNSSD_PROTOCOL, 631,
-                                         txt, txt_count),
+                                         s_mdns_txt, txt_count),
                         TAG, "IPP advertisement failed");
     ESP_RETURN_ON_ERROR(mdns_service_subtype_add_for_host(
                             s_service_instance, ESPRESSO_DNSSD_SERVICE,
                             ESPRESSO_DNSSD_PROTOCOL, NULL,
                             ESPRESSO_DNSSD_SUBTYPE),
                         TAG, "AirPrint subtype failed");
-    ESP_LOGI(TAG, "advertising modern AirPrint facade for %s", target.instance);
+    s_advertisement = s_pending_advertisement;
+    s_ipp_advertised = true;
+    ESP_LOGI(TAG, "advertising modern AirPrint facade for %s",
+             s_advertisement_target.instance);
     return ESP_OK;
+}
+
+esp_err_t printer_discovery_advertise_selected(void)
+{
+    if (!s_lock) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = advertise_selected_locked();
+    xSemaphoreGive(s_lock);
+    return err;
 }
 
 void printer_discovery_network_ready(void)

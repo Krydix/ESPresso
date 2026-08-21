@@ -2,6 +2,8 @@
 
 **Modern AirPrint for printers whose hardware still works.**
 
+[![Build firmware and deploy installer](https://github.com/Krydix/ESPresso/actions/workflows/pages.yml/badge.svg)](https://github.com/Krydix/ESPresso/actions/workflows/pages.yml)
+
 ESPresso is an ESP32-S3 compatibility proxy for a deliberately narrow first target:
 
 ```mermaid
@@ -48,9 +50,11 @@ document bytes to the printer.
 
 ## Install and onboard
 
-The `main` workflow publishes a browser flasher to GitHub Pages. On a fresh board:
+**[Open the ESPresso web installer →](https://krydix.github.io/ESPresso/)**
 
-1. Open the Pages installer in desktop Chrome or Edge and connect an ESP32-S3 over USB.
+The `main` workflow publishes this browser flasher to GitHub Pages. On a fresh board:
+
+1. Open the [ESPresso web installer](https://krydix.github.io/ESPresso/) in desktop Chrome or Edge and connect an ESP32-S3 over USB.
 2. Install ESPresso and wait for the board to restart.
 3. Join the open `ESPresso-XXXX` Wi-Fi network from a phone or laptop (or scan the matching Wi-Fi QR shown by the web installer).
 4. Use the captive portal to select the normal Wi-Fi network.

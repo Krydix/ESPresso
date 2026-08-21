@@ -12,12 +12,14 @@ using ESP-IDF for the actual network transport.
 | Read `rp`, `pdl`, `URF`, `ty`, `UUID`, feature flags | Compact `printer_target_t` profile |
 | Query `all,media-col-database` with IPP 2.0 | Bounded HTTP/IPP discovery request |
 | Fall back to IPP 1.1 `all` for old firmware | Automatic second discovery request |
+| Query capabilities in a document-format context | Bounded per-format probes, URF first |
 | Re-resolve a saved DNS-SD hostname after reboot | ESP-IDF mDNS A query before advertisement |
 | Derive formats, URF, media, color, duplex, copies and operations | Allocation-bounded IPP parser |
 | Advertise `_ipp._tcp,_universal` using real capabilities | ESP-IDF mDNS service and TXT record |
 | Present a modern queue identity | ESP-specific UUID, URI and IPP 1.1/2.0 facade |
-| Relay printer and job operations | Version/URI envelope translation and pass-through HTTP |
+| Relay printer and job operations | Safe operation allowlist, validation, IPP errors, and version/URI translation |
 | Relay document data | Unchanged 4 KiB streaming path |
+| Track live state | Refresh state and accepting-jobs metadata from capability responses |
 
 The selected profile is persisted in NVS. Its schema is versioned so firmware updates
 discard incompatible cached records instead of interpreting an old C structure.
@@ -38,11 +40,19 @@ For successful `Get-Printer-Attributes` responses ESPresso can safely own and no
   self-describing media names (plus a small set of CUPS-compatible legacy aliases);
 - modern color-mode metadata derived from older AirPrint color/URF attributes and
   printer resolutions derived from URF `RS` values;
+- mandatory charset/language, printer information, uptime, queue-count and PDL
+  behavior metadata missing from some legacy responses;
 - conservative `compression-supported=none` and
   `multiple-document-jobs-supported=false` values.
 
-Live state, jobs, unrecognized media collections, margins, finishings and vendor
-attributes are forwarded from the old printer. ESPresso does not fabricate them.
+Explicit `requested-attributes` values are honored after normalization, preventing a
+legacy-safe upstream `all` query from leaking unrequested attributes back to the
+client. The first two operation attributes are also validated in their RFC-required
+charset/language order.
+
+Jobs, unrecognized media collections, margins, finishings and vendor attributes are
+forwarded from the old printer. Live state is forwarded and cached for DNS-SD/UI use;
+ESPresso does not fabricate it.
 
 ## Excluded
 

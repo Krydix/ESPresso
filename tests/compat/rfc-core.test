@@ -1,0 +1,75 @@
+# Supported subset derived from the Apache-2.0 CUPS ipp-1.1.test suite.
+DEFINE IPP_URI_SCHEME "/^ipps?://.+$$/"
+{
+  NAME "RFC 8011 rejects request-id zero"
+  REQUEST-ID 0
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  STATUS client-error-bad-request
+  EXPECT !printer-uri-supported
+}
+{
+  NAME "RFC 8011 requires operation attributes"
+  REQUEST-ID random
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  STATUS client-error-bad-request
+}
+{
+  NAME "RFC 8011 requires natural language second"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR uri printer-uri $uri
+  STATUS client-error-bad-request
+}
+{
+  NAME "RFC 8011 requires charset first"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR charset attributes-charset utf-8
+  ATTR uri printer-uri $uri
+  STATUS client-error-bad-request
+}
+{
+  NAME "RFC 8011 accepts canonical operation attribute order"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  STATUS successful-ok
+  EXPECT printer-uri-supported OF-TYPE uri WITH-ALL-VALUES "$IPP_URI_SCHEME"
+}
+{
+  NAME "RFC 8011 rejects unsupported protocol versions"
+  VERSION 0.0
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  STATUS server-error-version-not-supported
+}
+{
+  NAME "RFC 8011 requires a printer URI"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  STATUS client-error-bad-request
+}
+{
+  NAME "Unsupported document formats receive an IPP status"
+  OPERATION Validate-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR mimeMediaType document-format image/pwg-raster
+  STATUS client-error-document-format-not-supported
+}

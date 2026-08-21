@@ -1,6 +1,7 @@
 #include "printer_discovery.h"
 
 #include <strings.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_check.h"
@@ -87,6 +88,18 @@ static void refresh_saved_address(void)
             snprintf(target.address, sizeof(target.address), "%s", resolved);
             ESP_ERROR_CHECK_WITHOUT_ABORT(app_state_set_target(&target));
         }
+    } else if (hostname[0]) {
+        esp_ip6_addr_t address6;
+        if (mdns_query_aaaa(hostname, 1500, &address6) == ESP_OK) {
+            char resolved[ESPRESSO_ADDRESS_MAX];
+            snprintf(resolved, sizeof(resolved), IPV6STR, IPV62STR(address6));
+            if (strcmp(resolved, target.address) != 0) {
+                ESP_LOGI(TAG, "%s moved from %s to %s", target.instance,
+                         target.address, resolved);
+                snprintf(target.address, sizeof(target.address), "%s", resolved);
+                ESP_ERROR_CHECK_WITHOUT_ABORT(app_state_set_target(&target));
+            }
+        }
     }
 }
 
@@ -105,6 +118,16 @@ static void target_from_result(const mdns_result_t *result, printer_target_t *ta
             snprintf(target->address, sizeof(target->address), IPSTR,
                      IP2STR(&address->addr.u_addr.ip4));
             break;
+        }
+    }
+    if (target->address[0] == '\0') {
+        for (mdns_ip_addr_t *address = result->addr; address;
+             address = address->next) {
+            if (address->addr.type == ESP_IPADDR_TYPE_V6) {
+                snprintf(target->address, sizeof(target->address), IPV6STR,
+                         IPV62STR(address->addr.u_addr.ip6));
+                break;
+            }
         }
     }
     char path[ESPRESSO_PATH_MAX] = {0};
@@ -134,6 +157,11 @@ static void target_from_result(const mdns_result_t *result, printer_target_t *ta
     txt_get(result, "Collate", flag, sizeof(flag));
     target->collate = text_is_true(flag);
     txt_get(result, "note", target->location, sizeof(target->location));
+    txt_get(result, "printer-state", flag, sizeof(flag));
+    unsigned long state = strtoul(flag, NULL, 10);
+    if (state >= 3 && state <= 5) {
+        target->printer_state = (uint8_t)state;
+    }
     ipp_codec_finalize_profile(target);
 }
 
@@ -168,7 +196,11 @@ esp_err_t printer_discovery_scan(void)
         return err;
     }
 
-    printer_target_t found[ESPRESSO_PRINTER_MAX] = {0};
+    printer_target_t *found = calloc(ESPRESSO_PRINTER_MAX, sizeof(*found));
+    if (!found) {
+        mdns_query_results_free(results);
+        return ESP_ERR_NO_MEM;
+    }
     size_t count = 0;
     for (mdns_result_t *result = results; result && count < ESPRESSO_PRINTER_MAX;
          result = result->next) {
@@ -177,10 +209,6 @@ esp_err_t printer_discovery_scan(void)
         }
         printer_target_t target;
         target_from_result(result, &target);
-        if (target.pdl[0] && !strstr(target.pdl, "image/urf") &&
-            target.urf[0] == '\0') {
-            continue;
-        }
         /* CUPS resolves DNS-SD first, then treats IPP as the capability source. */
         esp_err_t probe_err = printer_capabilities_probe(&target);
         if (probe_err != ESP_OK) {
@@ -209,9 +237,10 @@ esp_err_t printer_discovery_scan(void)
     mdns_query_results_free(results);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    memcpy(s_printers, found, sizeof(found));
+    memcpy(s_printers, found, sizeof(s_printers));
     s_printer_count = count;
     xSemaphoreGive(s_lock);
+    free(found);
     ESP_LOGI(TAG, "found %u IPP printer(s)", (unsigned)count);
     return ESP_OK;
 }
@@ -279,6 +308,9 @@ esp_err_t printer_discovery_advertise_selected(void)
     char duplex[] = "F";
     char copies[] = "F";
     char collate[] = "F";
+    char printer_state[4];
+    snprintf(printer_state, sizeof(printer_state), "%u",
+             target.printer_state ? target.printer_state : 3);
     if (target.color) {
         color[0] = 'T';
     }
@@ -308,6 +340,9 @@ esp_err_t printer_discovery_advertise_selected(void)
         {"Duplex", duplex},
         {"Copies", copies},
         {"Collate", collate},
+        {"Transparent", "T"},
+        {"Binary", "T"},
+        {"printer-state", printer_state},
         {"kind", "document"},
         {"priority", "0"},
         {"adminurl", admin_url},

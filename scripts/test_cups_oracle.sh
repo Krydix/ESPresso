@@ -15,6 +15,8 @@ mkdir -p "$build_dir"
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true' EXIT INT TERM
 sleep 1
+cd "$root_dir"
 ipptool -L -t ipp://127.0.0.1:18631/ipp/print "$root_dir/tests/cups-oracle.test"
-wait "$server_pid"
+kill "$server_pid" 2>/dev/null || true
+wait "$server_pid" 2>/dev/null || true
 trap - EXIT INT TERM

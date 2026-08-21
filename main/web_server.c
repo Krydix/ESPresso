@@ -108,6 +108,11 @@ static esp_err_t status_handler(httpd_req_t *request)
         cJSON_AddStringToObject(printer, "media", target.media);
         cJSON_AddStringToObject(printer, "upstreamIppVersions", target.ipp_versions);
         cJSON_AddBoolToObject(printer, "capabilityQueried", target.capability_queried);
+        cJSON_AddNumberToObject(printer, "state", target.printer_state);
+        cJSON_AddStringToObject(printer, "stateReasons", target.state_reasons);
+        cJSON_AddBoolToObject(printer, "acceptingJobs", target.accepting_jobs);
+        cJSON_AddBoolToObject(printer, "acceptingJobsKnown",
+                              target.accepting_jobs_known);
     }
     const esp_app_desc_t *description = esp_app_get_description();
     cJSON_AddStringToObject(root, "version", description->version);
@@ -219,6 +224,10 @@ static esp_err_t printers_handler(httpd_req_t *request)
         cJSON_AddBoolToObject(item, "capabilityQueried", target.capability_queried);
         cJSON_AddStringToObject(item, "ippVersions", target.ipp_versions);
         cJSON_AddStringToObject(item, "media", target.media);
+        cJSON_AddNumberToObject(item, "state", target.printer_state);
+        cJSON_AddBoolToObject(item, "acceptingJobs", target.accepting_jobs);
+        cJSON_AddBoolToObject(item, "acceptingJobsKnown",
+                              target.accepting_jobs_known);
         cJSON_AddItemToArray(printers, item);
     }
     return send_json(request, root);

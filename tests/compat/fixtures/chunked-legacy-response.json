@@ -1,0 +1,31 @@
+{
+  "name": "Chunked Response AirPrint",
+  "dns": {
+    "pdl": "image/urf,application/pdf",
+    "urf": "W8,SRGB24,RS300-600",
+    "media": "iso_a4_210x297mm,na_letter_8.5x11in"
+  },
+  "ipp": {
+    "version": "1.1",
+    "rejectIpp20": true,
+    "pdl": ["image/urf", "application/pdf"],
+    "urf": ["W8", "SRGB24", "RS300-600"],
+    "media": ["iso_a4_210x297mm", "na_letter_8.5x11in"],
+    "mediaDefault": "iso_a4_210x297mm",
+    "color": true,
+    "duplex": true,
+    "operations": [2, 4, 5, 6, 8, 9, 10, 11]
+  },
+  "faults": {
+    "chunkedResponse": true,
+    "pieceSize": 17,
+    "delayMs": 5
+  },
+  "relayExact": ["document-format-supported", "urf-supported", "media-supported"],
+  "expected": {
+    "ipp-versions-supported": ["1.1", "2.0"],
+    "operations-supported": [2, 4, 5, 6, 8, 9, 10, 11],
+    "document-format-default": "image/urf",
+    "color-supported": true
+  }
+}

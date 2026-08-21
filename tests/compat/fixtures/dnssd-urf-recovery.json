@@ -1,0 +1,33 @@
+{
+  "name": "DNS-SD URF Recovery Printer",
+  "dns": {
+    "pdl": "image/urf,application/pdf",
+    "urf": "W8,SRGB24,RS300",
+    "media": "iso_a4_210x297mm,na_letter_8.5x11in"
+  },
+  "ipp": {
+    "version": "1.1",
+    "rejectIpp20": true,
+    "pdl": ["image/urf", "application/pdf"],
+    "urf": [],
+    "media": ["iso_a4_210x297mm", "na_letter_8.5x11in"],
+    "mediaDefault": "iso_a4_210x297mm",
+    "color": true,
+    "duplex": false,
+    "copies": 1,
+    "operations": [2, 4, 5, 6, 8, 9, 10, 11]
+  },
+  "relayExact": ["document-format-supported", "media-supported"],
+  "expected": {
+    "ipp-versions-supported": ["1.1", "2.0"],
+    "operations-supported": [2, 4, 5, 6, 8, 9, 10, 11],
+    "urf-supported": ["W8", "SRGB24", "RS300"],
+    "sides-supported": "one-sided",
+    "printer-resolution-supported": {
+      "xres": 300,
+      "yres": 300,
+      "units": "dpi"
+    },
+    "color-supported": true
+  }
+}

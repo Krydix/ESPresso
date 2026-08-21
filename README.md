@@ -41,10 +41,18 @@ document bytes to the printer.
 - modern AirPrint DNS-SD facade on port 631 with the `_universal` subtype
 - streaming IPP proxy; the document body is not buffered
 - replacement of modern capability requests with a legacy-safe CUPS-style query
+- format-specific capability probes for every bounded pass-through PDL, with URF first
 - metadata-only synthesis for modern IPP versions, local URIs, bridge UUID and
   endpoint security, while preserving the printer's formats/media/operations
 - frontend IPP 2.0 ↔ negotiated legacy IPP version translation
 - printer/job URI rewriting in both directions
+- explicit safe mediation for Print-Job, Validate-Job, Create-Job/Send-Document,
+  Cancel-Job, Get-Jobs and Get-Job-Attributes; unsupported operations and formats
+  receive proper IPP status responses
+- live printer-state/accepting-jobs refresh from client capability requests
+- IPv4 preference with IPv6 fallback and correctly bracketed IPv6 IPP URIs
+- `Expect: 100-continue`, bounded receive retries, long streaming-job timeouts and
+  strict IPP envelope/content-type validation
 - GitHub Actions firmware build, downloadable artifacts, and GitHub Pages deployment
 - ESP Web Tools installer manifest generated from ESP-IDF's own `flasher_args.json`
 - dual-slot OTA updates from the settings UI, using either the published GitHub Pages
@@ -92,12 +100,20 @@ Install ESP-IDF 5.4, then:
 ```sh
 make test
 make test-cups
+make test-compat
+make test-sanitize
 make build
 make web-installer
 make flash PORT=/dev/cu.usbmodemXXXX
 ```
 
-`test-cups` uses the system `ipptool` as an independent parser/oracle. `IDF_PATH`
+`test-cups` uses the system `ipptool` as an independent parser/oracle. Its suite
+currently exercises nine capability, job-operation, URI-rewrite, and error-response
+cases. `test-compat` adds a host-native legacy-printer emulator and proxy around the
+same codec used by the firmware, then runs CUPS semantic comparisons, RFC edge cases,
+job flows, exact 1 MiB document relays, IPP/1.1 fallback, chunked legacy responses,
+legacy attribute aliases, DNS-SD recovery, and malformed-response rejection.
+See [docs/compatibility-lab.md](docs/compatibility-lab.md). `IDF_PATH`
 defaults to `~/esp/esp-idf` and can be overridden on the command line.
 
 ## Architecture
@@ -119,6 +135,7 @@ frontend/index.html     UI embedded into firmware
 web-installer/          GitHub Pages source
 scripts/                ESP-IDF flash-map → ESP Web Tools staging
 tests/                  host codec tests + live CUPS ipptool oracle fixture
+  compat/               differential CUPS compatibility lab + printer fixtures
 ```
 
 The request path buffers only the IPP attribute prefix (maximum 64 KiB), rewrites it,
@@ -135,7 +152,7 @@ capability query fallback, normalized profile, and outward DNS-SD/IPP mappings. 
 
 The first target must already:
 
-- be reachable over unencrypted IPP on the same IPv4 LAN;
+- be reachable over unencrypted IPP on the same IPv4 or IPv6 LAN;
 - advertise `_ipp._tcp` through Bonjour/mDNS;
 - accept Apple Raster (`image/urf`); and
 - accept the same document format that ESPresso advertises to the client.
@@ -148,6 +165,10 @@ PCL/PostScript drivers, PPD processing, filters, subscriptions implemented by ES
 spooling, or a signed compatibility database. ESPresso can derive basic
 media-size collections from PWG self-describing names, but margins, sources, finishings,
 and live printer/job state remain the old printer's responsibility.
+
+Incoming IPP requests currently need a `Content-Length`; ESP-IDF's HTTP server rejects
+chunked request bodies before the application handler. Document data itself remains
+streamed and can be much larger than RAM.
 
 ## Design references
 

@@ -28,7 +28,6 @@
 #define IPP_TAG_MIMETYPE 0x49
 #define IPP_TAG_MEMBER_NAME 0x4a
 
-#define IPP_OP_GET_PRINTER_ATTRIBUTES 0x000b
 #define IPP_STATUS_ERROR_BAD_REQUEST 0x0400
 
 typedef struct {
@@ -37,33 +36,44 @@ typedef struct {
     size_t capacity;
 } byte_buffer_t;
 
-typedef enum {
-    PRESENT_VERSIONS = 1ULL << 0,
-    PRESENT_OPERATIONS = 1ULL << 1,
-    PRESENT_PRINTER_URI = 1ULL << 2,
-    PRESENT_URI_AUTH = 1ULL << 3,
-    PRESENT_URI_SECURITY = 1ULL << 4,
-    PRESENT_UUID = 1ULL << 5,
-    PRESENT_NAME = 1ULL << 6,
-    PRESENT_INFO = 1ULL << 7,
-    PRESENT_MAKE_MODEL = 1ULL << 8,
-    PRESENT_LOCATION = 1ULL << 9,
-    PRESENT_FORMATS = 1ULL << 10,
-    PRESENT_FORMAT_DEFAULT = 1ULL << 11,
-    PRESENT_URF = 1ULL << 12,
-    PRESENT_COLOR = 1ULL << 13,
-    PRESENT_SIDES = 1ULL << 14,
-    PRESENT_COPIES = 1ULL << 15,
-    PRESENT_MEDIA = 1ULL << 16,
-    PRESENT_COMPRESSION = 1ULL << 17,
-    PRESENT_MULTIPLE_DOCUMENTS = 1ULL << 18,
-    PRESENT_MEDIA_COL_DATABASE = 1ULL << 19,
-    PRESENT_MEDIA_COL_DEFAULT = 1ULL << 20,
-    PRESENT_PRINT_COLOR_MODE = 1ULL << 21,
-    PRESENT_PRINT_COLOR_DEFAULT = 1ULL << 22,
-    PRESENT_RESOLUTION = 1ULL << 23,
-    PRESENT_RESOLUTION_DEFAULT = 1ULL << 24,
-} present_attribute_t;
+typedef uint64_t present_attribute_t;
+#define PRESENT_VERSIONS (1ULL << 0)
+#define PRESENT_OPERATIONS (1ULL << 1)
+#define PRESENT_PRINTER_URI (1ULL << 2)
+#define PRESENT_URI_AUTH (1ULL << 3)
+#define PRESENT_URI_SECURITY (1ULL << 4)
+#define PRESENT_UUID (1ULL << 5)
+#define PRESENT_NAME (1ULL << 6)
+#define PRESENT_INFO (1ULL << 7)
+#define PRESENT_MAKE_MODEL (1ULL << 8)
+#define PRESENT_LOCATION (1ULL << 9)
+#define PRESENT_FORMATS (1ULL << 10)
+#define PRESENT_FORMAT_DEFAULT (1ULL << 11)
+#define PRESENT_URF (1ULL << 12)
+#define PRESENT_COLOR (1ULL << 13)
+#define PRESENT_SIDES (1ULL << 14)
+#define PRESENT_COPIES (1ULL << 15)
+#define PRESENT_MEDIA (1ULL << 16)
+#define PRESENT_COMPRESSION (1ULL << 17)
+#define PRESENT_MULTIPLE_DOCUMENTS (1ULL << 18)
+#define PRESENT_MEDIA_COL_DATABASE (1ULL << 19)
+#define PRESENT_MEDIA_COL_DEFAULT (1ULL << 20)
+#define PRESENT_PRINT_COLOR_MODE (1ULL << 21)
+#define PRESENT_PRINT_COLOR_DEFAULT (1ULL << 22)
+#define PRESENT_RESOLUTION (1ULL << 23)
+#define PRESENT_RESOLUTION_DEFAULT (1ULL << 24)
+#define PRESENT_JOB_CREATION (1ULL << 25)
+#define PRESENT_PRINTER_STATE (1ULL << 26)
+#define PRESENT_STATE_REASONS (1ULL << 27)
+#define PRESENT_ACCEPTING_JOBS (1ULL << 28)
+#define PRESENT_CHARSET_CONFIGURED (1ULL << 29)
+#define PRESENT_CHARSET_SUPPORTED (1ULL << 30)
+#define PRESENT_LANGUAGE_CONFIGURED (1ULL << 31)
+#define PRESENT_LANGUAGE_SUPPORTED (1ULL << 32)
+#define PRESENT_MORE_INFO (1ULL << 33)
+#define PRESENT_UP_TIME (1ULL << 34)
+#define PRESENT_PDL_OVERRIDE (1ULL << 35)
+#define PRESENT_QUEUED_JOB_COUNT (1ULL << 36)
 
 static uint16_t read_u16(const uint8_t *data)
 {
@@ -337,6 +347,18 @@ static uint64_t attribute_presence(const char *name)
         {"print-color-mode-default", PRESENT_PRINT_COLOR_DEFAULT},
         {"printer-resolution-supported", PRESENT_RESOLUTION},
         {"printer-resolution-default", PRESENT_RESOLUTION_DEFAULT},
+        {"job-creation-attributes-supported", PRESENT_JOB_CREATION},
+        {"printer-state", PRESENT_PRINTER_STATE},
+        {"printer-state-reasons", PRESENT_STATE_REASONS},
+        {"printer-is-accepting-jobs", PRESENT_ACCEPTING_JOBS},
+        {"charset-configured", PRESENT_CHARSET_CONFIGURED},
+        {"charset-supported", PRESENT_CHARSET_SUPPORTED},
+        {"natural-language-configured", PRESENT_LANGUAGE_CONFIGURED},
+        {"generated-natural-language-supported", PRESENT_LANGUAGE_SUPPORTED},
+        {"printer-more-info", PRESENT_MORE_INFO},
+        {"printer-up-time", PRESENT_UP_TIME},
+        {"pdl-override-supported", PRESENT_PDL_OVERRIDE},
+        {"queued-job-count", PRESENT_QUEUED_JOB_COUNT},
     };
     for (size_t i = 0; i < sizeof(attributes) / sizeof(attributes[0]); ++i) {
         if (strcmp(name, attributes[i].name) == 0) {
@@ -538,10 +560,12 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
          !append_string(buffer, IPP_TAG_KEYWORD, NULL, "2.0"))) {
         return false;
     }
-    if (!(present & PRESENT_OPERATIONS) && target->operations_supported) {
+    uint64_t relay_operations = ipp_codec_relay_operations(
+        target->operations_supported);
+    if (!(present & PRESENT_OPERATIONS) && relay_operations) {
         bool first = true;
         for (uint32_t operation = 0; operation < 64; ++operation) {
-            if ((target->operations_supported & (1ULL << operation)) != 0) {
+            if ((relay_operations & (1ULL << operation)) != 0) {
                 if (!append_enum(buffer, "operations-supported", operation, first)) {
                     return false;
                 }
@@ -595,6 +619,54 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
     }
     if (!(present & PRESENT_LOCATION) && target->location[0] &&
         !append_string(buffer, IPP_TAG_TEXT, "printer-location", target->location)) {
+        return false;
+    }
+    if (!(present & PRESENT_LOCATION) && !target->location[0] &&
+        !append_string(buffer, IPP_TAG_TEXT, "printer-location", "")) {
+        return false;
+    }
+    if (!(present & PRESENT_CHARSET_CONFIGURED) &&
+        !append_string(buffer, IPP_TAG_CHARSET, "charset-configured", "utf-8")) {
+        return false;
+    }
+    if (!(present & PRESENT_CHARSET_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_CHARSET, "charset-supported", "utf-8")) {
+        return false;
+    }
+    if (!(present & PRESENT_LANGUAGE_CONFIGURED) &&
+        !append_string(buffer, IPP_TAG_LANGUAGE,
+                       "natural-language-configured", "en")) {
+        return false;
+    }
+    if (!(present & PRESENT_LANGUAGE_SUPPORTED) &&
+        !append_string(buffer, IPP_TAG_LANGUAGE,
+                       "generated-natural-language-supported", "en")) {
+        return false;
+    }
+    if (!(present & PRESENT_MORE_INFO)) {
+        const char *uri_suffix = strstr(printer_uri, "://");
+        char more_info[ESPRESSO_ADDRESS_MAX + 40];
+        if (uri_suffix) {
+            snprintf(more_info, sizeof(more_info), "http://%.*s/",
+                     (int)strcspn(uri_suffix + 3, "/"), uri_suffix + 3);
+        } else {
+            snprintf(more_info, sizeof(more_info), "http://espresso.local/");
+        }
+        if (!append_string(buffer, IPP_TAG_URI, "printer-more-info", more_info)) {
+            return false;
+        }
+    }
+    if (!(present & PRESENT_UP_TIME) &&
+        !append_i32(buffer, IPP_TAG_INTEGER, "printer-up-time", 1)) {
+        return false;
+    }
+    if (!(present & PRESENT_PDL_OVERRIDE) &&
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "pdl-override-supported", "not-attempted")) {
+        return false;
+    }
+    if (!(present & PRESENT_QUEUED_JOB_COUNT) &&
+        !append_i32(buffer, IPP_TAG_INTEGER, "queued-job-count", 0)) {
         return false;
     }
     if (!(present & PRESENT_FORMATS) && target->pdl[0] &&
@@ -691,6 +763,43 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
             return false;
         }
     }
+    if (!(present & PRESENT_PRINTER_STATE) && target->printer_state &&
+        !append_i32(buffer, IPP_TAG_ENUM, "printer-state",
+                    target->printer_state)) {
+        return false;
+    }
+    if (!(present & PRESENT_STATE_REASONS) && target->printer_state) {
+        const char *reasons = target->state_reasons[0] ?
+                              target->state_reasons : "none";
+        if (!append_csv_attributes(buffer, IPP_TAG_KEYWORD,
+                                   "printer-state-reasons", reasons)) {
+            return false;
+        }
+    }
+    if (!(present & PRESENT_ACCEPTING_JOBS) && target->accepting_jobs_known) {
+        uint8_t accepting = target->accepting_jobs ? 1 : 0;
+        if (!append_attribute(buffer, IPP_TAG_BOOLEAN,
+                              "printer-is-accepting-jobs", &accepting, 1)) {
+            return false;
+        }
+    }
+    if (!(present & PRESENT_JOB_CREATION)) {
+        if (!append_string(buffer, IPP_TAG_KEYWORD,
+                           "job-creation-attributes-supported", "job-name") ||
+            !append_string(buffer, IPP_TAG_KEYWORD, NULL, "document-format") ||
+            (target->copies_upper > 1 &&
+             !append_string(buffer, IPP_TAG_KEYWORD, NULL, "copies")) ||
+            (target->media[0] &&
+             (!append_string(buffer, IPP_TAG_KEYWORD, NULL, "media") ||
+              !append_string(buffer, IPP_TAG_KEYWORD, NULL, "media-col"))) ||
+            !append_string(buffer, IPP_TAG_KEYWORD, NULL, "sides") ||
+            !append_string(buffer, IPP_TAG_KEYWORD, NULL, "print-color-mode") ||
+            (target->resolution_low_dpi &&
+             !append_string(buffer, IPP_TAG_KEYWORD, NULL,
+                            "printer-resolution"))) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -779,6 +888,7 @@ static ipp_codec_result_t transform_message(
 
         bool replace_profile_value = normalize &&
             (strcmp(current_name, "ipp-versions-supported") == 0 ||
+             strcmp(current_name, "operations-supported") == 0 ||
              strcmp(current_name, "printer-uuid") == 0 ||
              strcmp(current_name, "uri-authentication-supported") == 0 ||
              strcmp(current_name, "uri-security-supported") == 0);
@@ -860,6 +970,16 @@ ipp_codec_result_t ipp_codec_build_get_printer_attributes(
     uint8_t major, uint8_t minor, uint32_t request_id, const char *printer_uri,
     bool include_media_col_database, uint8_t **output, size_t *output_length)
 {
+    return ipp_codec_build_get_printer_attributes_for_format(
+        major, minor, request_id, printer_uri, include_media_col_database,
+        NULL, output, output_length);
+}
+
+ipp_codec_result_t ipp_codec_build_get_printer_attributes_for_format(
+    uint8_t major, uint8_t minor, uint32_t request_id, const char *printer_uri,
+    bool include_media_col_database, const char *document_format,
+    uint8_t **output, size_t *output_length)
+{
     if (!major || !printer_uri || !output || !output_length) {
         return IPP_CODEC_MALFORMED;
     }
@@ -867,8 +987,8 @@ ipp_codec_result_t ipp_codec_build_get_printer_attributes(
     *output_length = 0;
     uint8_t header[] = {
         major, minor,
-        (uint8_t)(IPP_OP_GET_PRINTER_ATTRIBUTES >> 8),
-        (uint8_t)IPP_OP_GET_PRINTER_ATTRIBUTES,
+        (uint8_t)(IPP_OPERATION_GET_PRINTER_ATTRIBUTES >> 8),
+        (uint8_t)IPP_OPERATION_GET_PRINTER_ATTRIBUTES,
         (uint8_t)(request_id >> 24), (uint8_t)(request_id >> 16),
         (uint8_t)(request_id >> 8), (uint8_t)request_id,
         IPP_TAG_OPERATION_ATTRIBUTES,
@@ -880,6 +1000,10 @@ ipp_codec_result_t ipp_codec_build_get_printer_attributes(
                                "attributes-natural-language", "en") &&
                  append_string(&request, IPP_TAG_URI, "printer-uri", printer_uri) &&
                  append_string(&request, IPP_TAG_KEYWORD, "requested-attributes", "all");
+    if (valid && document_format && *document_format) {
+        valid = append_string(&request, IPP_TAG_MIMETYPE, "document-format",
+                              document_format);
+    }
     if (valid && include_media_col_database) {
         valid = append_string(&request, IPP_TAG_KEYWORD, NULL, "media-col-database");
     }
@@ -892,6 +1016,288 @@ ipp_codec_result_t ipp_codec_build_get_printer_attributes(
     *output = request.data;
     *output_length = request.length;
     return IPP_CODEC_OK;
+}
+
+ipp_codec_result_t ipp_codec_inspect_request(
+    const uint8_t *input, size_t input_length, ipp_request_info_t *info)
+{
+    if (!input || !info) {
+        return IPP_CODEC_MALFORMED;
+    }
+    memset(info, 0, sizeof(*info));
+    if (input_length < IPP_HEADER_LENGTH) {
+        return IPP_CODEC_INCOMPLETE;
+    }
+    info->major = input[0];
+    info->minor = input[1];
+    info->operation_id = read_u16(input + 2);
+    info->request_id = read_u32(input + 4);
+    info->operation_attributes_valid = true;
+
+    size_t cursor = IPP_HEADER_LENGTH;
+    char current_name[IPP_NAME_MAX + 1] = {0};
+    uint8_t current_group = 0;
+    size_t operation_attribute_index = 0;
+    bool saw_group = false;
+    bool saw_operation_group = false;
+    while (cursor < input_length) {
+        uint8_t tag = input[cursor++];
+        if (tag == IPP_TAG_END_ATTRIBUTES) {
+            if (!saw_operation_group || operation_attribute_index < 2) {
+                info->operation_attributes_valid = false;
+            }
+            info->attributes_length = cursor;
+            info->has_document = cursor < input_length;
+            return IPP_CODEC_OK;
+        }
+        if (tag <= 0x0f) {
+            if (!saw_group && tag != IPP_TAG_OPERATION_ATTRIBUTES) {
+                info->operation_attributes_valid = false;
+            }
+            if (tag == IPP_TAG_OPERATION_ATTRIBUTES) {
+                if (saw_operation_group) {
+                    info->operation_attributes_valid = false;
+                }
+                saw_operation_group = true;
+            }
+            saw_group = true;
+            current_group = tag;
+            current_name[0] = '\0';
+            continue;
+        }
+        if (cursor + 2 > input_length) {
+            return IPP_CODEC_INCOMPLETE;
+        }
+        uint16_t name_length = read_u16(input + cursor);
+        cursor += 2;
+        if (name_length > IPP_NAME_MAX || cursor + name_length + 2 > input_length) {
+            return name_length > IPP_NAME_MAX ? IPP_CODEC_MALFORMED :
+                                                IPP_CODEC_INCOMPLETE;
+        }
+        if (name_length) {
+            memcpy(current_name, input + cursor, name_length);
+            current_name[name_length] = '\0';
+        } else if (!current_name[0]) {
+            return IPP_CODEC_MALFORMED;
+        }
+        cursor += name_length;
+        uint16_t value_length = read_u16(input + cursor);
+        cursor += 2;
+        if (cursor + value_length > input_length) {
+            return IPP_CODEC_INCOMPLETE;
+        }
+        if (current_group == IPP_TAG_OPERATION_ATTRIBUTES) {
+            bool is_charset = strcmp(current_name, "attributes-charset") == 0 &&
+                              tag == IPP_TAG_CHARSET;
+            bool is_language =
+                strcmp(current_name, "attributes-natural-language") == 0 &&
+                tag == IPP_TAG_LANGUAGE;
+            if ((operation_attribute_index == 0 && !is_charset) ||
+                (operation_attribute_index == 1 && !is_language) ||
+                (operation_attribute_index > 1 && (is_charset || is_language))) {
+                info->operation_attributes_valid = false;
+            }
+            ++operation_attribute_index;
+        }
+        if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+            strcmp(current_name, "document-format") == 0 &&
+            tag == IPP_TAG_MIMETYPE) {
+            copy_value(info->document_format, sizeof(info->document_format),
+                       input + cursor, value_length);
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   strcmp(current_name, "attributes-charset") == 0 &&
+                   tag == IPP_TAG_CHARSET) {
+            info->has_attributes_charset = true;
+            copy_value(info->attributes_charset,
+                       sizeof(info->attributes_charset), input + cursor,
+                       value_length);
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   strcmp(current_name, "attributes-natural-language") == 0 &&
+                   tag == IPP_TAG_LANGUAGE) {
+            info->has_natural_language = true;
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   (strcmp(current_name, "printer-uri") == 0 ||
+                    strcmp(current_name, "job-uri") == 0) &&
+                   tag == IPP_TAG_URI) {
+            info->has_target_uri = true;
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   strcmp(current_name, "requested-attributes") == 0 &&
+                   tag == IPP_TAG_KEYWORD) {
+            csv_add_split(info->requested_attributes,
+                          sizeof(info->requested_attributes), input + cursor,
+                          value_length);
+        }
+        cursor += value_length;
+    }
+    return IPP_CODEC_INCOMPLETE;
+}
+
+ipp_codec_result_t ipp_codec_filter_printer_response(
+    const uint8_t *input, size_t input_length, const char *requested_attributes,
+    uint8_t **output, size_t *output_length, size_t *attributes_length)
+{
+    if (!input || !output || !output_length || !attributes_length) {
+        return IPP_CODEC_MALFORMED;
+    }
+    if (!requested_attributes || !*requested_attributes ||
+        csv_contains(requested_attributes, "all", 3)) {
+        byte_buffer_t copy = {0};
+        if (!append(&copy, input, input_length)) {
+            return IPP_CODEC_NO_MEMORY;
+        }
+        ipp_request_info_t ignored;
+        ipp_codec_result_t inspected = ipp_codec_inspect_request(
+            input, input_length, &ignored);
+        if (inspected != IPP_CODEC_OK) {
+            free(copy.data);
+            return inspected;
+        }
+        *output = copy.data;
+        *output_length = copy.length;
+        *attributes_length = ignored.attributes_length;
+        return IPP_CODEC_OK;
+    }
+    if (input_length < IPP_HEADER_LENGTH) {
+        return IPP_CODEC_INCOMPLETE;
+    }
+    byte_buffer_t result = {0};
+    if (!append(&result, input, IPP_HEADER_LENGTH)) {
+        return IPP_CODEC_NO_MEMORY;
+    }
+    size_t cursor = IPP_HEADER_LENGTH;
+    uint8_t current_group = 0;
+    char current_name[IPP_NAME_MAX + 1] = {0};
+    bool ended = false;
+    while (cursor < input_length) {
+        size_t record_start = cursor;
+        uint8_t tag = input[cursor++];
+        if (tag == IPP_TAG_END_ATTRIBUTES) {
+            if (!append(&result, &tag, 1)) {
+                free(result.data);
+                return IPP_CODEC_NO_MEMORY;
+            }
+            *attributes_length = cursor;
+            ended = true;
+            break;
+        }
+        if (tag <= 0x0f) {
+            current_group = tag;
+            current_name[0] = '\0';
+            if (!append(&result, &tag, 1)) {
+                free(result.data);
+                return IPP_CODEC_NO_MEMORY;
+            }
+            continue;
+        }
+        if (cursor + 2 > input_length) {
+            free(result.data);
+            return IPP_CODEC_INCOMPLETE;
+        }
+        uint16_t name_length = read_u16(input + cursor);
+        cursor += 2;
+        if (name_length > IPP_NAME_MAX || cursor + name_length + 2 > input_length) {
+            free(result.data);
+            return name_length > IPP_NAME_MAX ? IPP_CODEC_MALFORMED :
+                                                IPP_CODEC_INCOMPLETE;
+        }
+        if (name_length) {
+            memcpy(current_name, input + cursor, name_length);
+            current_name[name_length] = '\0';
+        } else if (!current_name[0]) {
+            free(result.data);
+            return IPP_CODEC_MALFORMED;
+        }
+        cursor += name_length;
+        uint16_t value_length = read_u16(input + cursor);
+        cursor += 2;
+        if (cursor + value_length > input_length) {
+            free(result.data);
+            return IPP_CODEC_INCOMPLETE;
+        }
+        cursor += value_length;
+        bool include = current_group != IPP_TAG_PRINTER_ATTRIBUTES ||
+                       csv_contains(requested_attributes, current_name,
+                                    strlen(current_name));
+        if (include && !append(&result, input + record_start,
+                               cursor - record_start)) {
+            free(result.data);
+            return IPP_CODEC_NO_MEMORY;
+        }
+    }
+    if (!ended) {
+        free(result.data);
+        return IPP_CODEC_INCOMPLETE;
+    }
+    if (cursor < input_length &&
+        !append(&result, input + cursor, input_length - cursor)) {
+        free(result.data);
+        return IPP_CODEC_NO_MEMORY;
+    }
+    *output = result.data;
+    *output_length = result.length;
+    return IPP_CODEC_OK;
+}
+
+ipp_codec_result_t ipp_codec_build_status_response(
+    uint8_t major, uint8_t minor, uint16_t status_code, uint32_t request_id,
+    const char *status_message, uint8_t **output, size_t *output_length)
+{
+    if (!major || !output || !output_length) {
+        return IPP_CODEC_MALFORMED;
+    }
+    *output = NULL;
+    *output_length = 0;
+    uint8_t header[] = {
+        major, minor, (uint8_t)(status_code >> 8), (uint8_t)status_code,
+        (uint8_t)(request_id >> 24), (uint8_t)(request_id >> 16),
+        (uint8_t)(request_id >> 8), (uint8_t)request_id,
+        IPP_TAG_OPERATION_ATTRIBUTES,
+    };
+    byte_buffer_t response = {0};
+    bool valid = append(&response, header, sizeof(header)) &&
+                 append_string(&response, IPP_TAG_CHARSET,
+                               "attributes-charset", "utf-8") &&
+                 append_string(&response, IPP_TAG_LANGUAGE,
+                               "attributes-natural-language", "en");
+    if (valid && status_message && *status_message) {
+        valid = append_string(&response, IPP_TAG_TEXT, "status-message",
+                              status_message);
+    }
+    uint8_t end = IPP_TAG_END_ATTRIBUTES;
+    valid = valid && append(&response, &end, 1);
+    if (!valid) {
+        free(response.data);
+        return IPP_CODEC_NO_MEMORY;
+    }
+    *output = response.data;
+    *output_length = response.length;
+    return IPP_CODEC_OK;
+}
+
+uint64_t ipp_codec_relay_operations(uint64_t upstream_operations)
+{
+    const uint64_t individually_safe =
+        (1ULL << IPP_OPERATION_PRINT_JOB) |
+        (1ULL << IPP_OPERATION_VALIDATE_JOB) |
+        (1ULL << IPP_OPERATION_CANCEL_JOB) |
+        (1ULL << IPP_OPERATION_GET_JOB_ATTRIBUTES) |
+        (1ULL << IPP_OPERATION_GET_JOBS) |
+        (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
+    uint64_t relay = upstream_operations & individually_safe;
+    relay |= 1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES;
+    if ((upstream_operations & (1ULL << IPP_OPERATION_CREATE_JOB)) &&
+        (upstream_operations & (1ULL << IPP_OPERATION_SEND_DOCUMENT))) {
+        relay |= (1ULL << IPP_OPERATION_CREATE_JOB) |
+                 (1ULL << IPP_OPERATION_SEND_DOCUMENT);
+    }
+    return relay;
+}
+
+bool ipp_codec_format_supported(const printer_target_t *target,
+                                const char *document_format)
+{
+    return target && document_format && *document_format &&
+           csv_contains(target->pdl, document_format, strlen(document_format));
 }
 
 void ipp_codec_finalize_profile(printer_target_t *target)
@@ -942,6 +1348,13 @@ void ipp_codec_finalize_profile(printer_target_t *target)
         }
     }
     target->copies = target->copies || target->copies_upper > 1;
+    if (target->urf[0]) {
+        /* A discovered AirPrint/URF printer necessarily implements these two
+         * operations even when old firmware omits operations-supported. */
+        target->operations_supported |=
+            (1ULL << IPP_OPERATION_PRINT_JOB) |
+            (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
+    }
     if (!target->ipp_versions[0] && target->upstream_ipp_major) {
         snprintf(target->ipp_versions, sizeof(target->ipp_versions), "%u.%u",
                  target->upstream_ipp_major, target->upstream_ipp_minor);
@@ -1077,6 +1490,20 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
             if (operation < 64) {
                 target->operations_supported |= 1ULL << operation;
             }
+        } else if (strcmp(current_name, "printer-state") == 0 &&
+                   tag == IPP_TAG_ENUM && value_length == 4) {
+            uint32_t state = read_u32(value);
+            if (state <= UINT8_MAX) {
+                target->printer_state = (uint8_t)state;
+            }
+        } else if (strcmp(current_name, "printer-is-accepting-jobs") == 0 &&
+                   tag == IPP_TAG_BOOLEAN && value_length == 1) {
+            target->accepting_jobs = value[0] != 0;
+            target->accepting_jobs_known = true;
+        } else if (strcmp(current_name, "printer-state-reasons") == 0 &&
+                   tag == IPP_TAG_KEYWORD) {
+            csv_add_split(target->state_reasons, sizeof(target->state_reasons),
+                          value, value_length);
         }
     }
     return IPP_CODEC_INCOMPLETE;

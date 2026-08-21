@@ -48,30 +48,8 @@ static int send_all(int socket_fd, const void *data, size_t length)
     return 0;
 }
 
-int main(void)
+static int handle_client(int client)
 {
-    int server = socket(AF_INET, SOCK_STREAM, 0);
-    if (server < 0) {
-        return 1;
-    }
-    int reuse = 1;
-    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    struct sockaddr_in address = {
-        .sin_family = AF_INET,
-        .sin_port = htons(18631),
-        .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
-    };
-    if (bind(server, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-        listen(server, 1) != 0) {
-        close(server);
-        return 1;
-    }
-
-    int client = accept(server, NULL, NULL);
-    if (client < 0) {
-        close(server);
-        return 1;
-    }
     uint8_t request[16384];
     size_t request_length = 0;
     uint8_t *body = NULL;
@@ -105,31 +83,86 @@ int main(void)
         }
     }
     if (!body || (size_t)(request + request_length - body) < 8) {
-        close(client);
-        close(server);
         return 1;
+    }
+
+    uint16_t operation = ipp_codec_message_code(body, content_length);
+    uint32_t request_id = ((uint32_t)body[4] << 24) |
+                          ((uint32_t)body[5] << 16) |
+                          ((uint32_t)body[6] << 8) | body[7];
+    if (operation == 0x0003) {
+        uint8_t *unsupported = NULL;
+        size_t unsupported_length = 0;
+        if (ipp_codec_build_status_response(
+                body[0], body[1], IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED,
+                request_id, "Operation is not safe to relay", &unsupported,
+                &unsupported_length) != IPP_CODEC_OK) {
+            return 1;
+        }
+        char headers[256];
+        int header_length = snprintf(headers, sizeof(headers),
+                                     "HTTP/1.1 200 OK\r\n"
+                                     "Content-Type: application/ipp\r\n"
+                                     "Content-Length: %zu\r\n"
+                                     "Connection: close\r\n\r\n",
+                                     unsupported_length);
+        int result = send_all(client, headers, (size_t)header_length) ||
+                     send_all(client, unsupported, unsupported_length);
+        free(unsupported);
+        return result ? 1 : 0;
     }
 
     uint8_t legacy[4096] = {1, 1, 0, 0, body[4], body[5], body[6], body[7], 1};
     size_t length = 9;
     length = add_string(legacy, length, 0x47, "attributes-charset", "utf-8");
     length = add_string(legacy, length, 0x48, "attributes-natural-language", "en");
-    legacy[length++] = 4;
-    length = add_string(legacy, length, 0x44, "ipp-versions-supported", "1.1");
-    length = add_string(legacy, length, 0x45, "printer-uri-supported",
-                        "ipp://legacy.local:631/ipp/print");
-    length = add_string(legacy, length, 0x45, "printer-uuid",
-                        "urn:uuid:physical-printer");
-    length = add_string(legacy, length, 0x44, "uri-security-supported", "tls");
-    length = add_string(legacy, length, 0x49, "document-format-supported", "image/urf");
-    length = add_string(legacy, length, 0x44, "urf-supported", "W8");
-    length = add_string(legacy, length, 0x44, NULL, "SRGB24");
-    length = add_string(legacy, length, 0x44, NULL, "RS300-600");
-    length = add_string(legacy, length, 0x44, "media-supported",
-                        "iso_a4_210x297mm");
-    length = add_string(legacy, length, 0x44, NULL, "na_letter_8.5x11in");
-    length = add_string(legacy, length, 0x44, "media-default",
-                        "iso_a4_210x297mm");
+    if (operation == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
+        legacy[length++] = 4;
+        length = add_string(legacy, length, 0x44, "ipp-versions-supported", "1.1");
+        length = add_string(legacy, length, 0x45, "printer-uri-supported",
+                            "ipp://legacy.local:631/ipp/print");
+        length = add_string(legacy, length, 0x45, "printer-uuid",
+                            "urn:uuid:physical-printer");
+        length = add_string(legacy, length, 0x44, "uri-security-supported", "tls");
+        length = add_string(legacy, length, 0x49, "document-format-supported",
+                            "image/urf");
+        length = add_string(legacy, length, 0x44, "urf-supported", "W8");
+        length = add_string(legacy, length, 0x44, NULL, "SRGB24");
+        length = add_string(legacy, length, 0x44, NULL, "RS300-600");
+        length = add_string(legacy, length, 0x44, "media-supported",
+                            "iso_a4_210x297mm");
+        length = add_string(legacy, length, 0x44, NULL, "na_letter_8.5x11in");
+        length = add_string(legacy, length, 0x44, "media-default",
+                            "iso_a4_210x297mm");
+        const uint32_t operations[] = {2, 3, 4, 5, 6, 8, 9, 10, 11};
+        for (size_t i = 0; i < sizeof(operations) / sizeof(operations[0]); ++i) {
+            uint8_t value[] = {0, 0, 0, (uint8_t)operations[i]};
+            length = add_value(legacy, length, 0x23,
+                               i ? NULL : "operations-supported", value,
+                               sizeof(value));
+        }
+        uint8_t state[] = {0, 0, 0, 3};
+        length = add_value(legacy, length, 0x23, "printer-state", state,
+                           sizeof(state));
+        uint8_t accepting[] = {1};
+        length = add_value(legacy, length, 0x22,
+                           "printer-is-accepting-jobs", accepting,
+                           sizeof(accepting));
+        length = add_string(legacy, length, 0x44, "printer-state-reasons", "none");
+    } else if (operation == IPP_OPERATION_PRINT_JOB ||
+               operation == IPP_OPERATION_CREATE_JOB ||
+               operation == IPP_OPERATION_GET_JOB_ATTRIBUTES ||
+               operation == IPP_OPERATION_GET_JOBS) {
+        legacy[length++] = 2;
+        uint8_t job_id[] = {0, 0, 0, 42};
+        length = add_value(legacy, length, 0x21, "job-id", job_id,
+                           sizeof(job_id));
+        length = add_string(legacy, length, 0x45, "job-uri",
+                            "ipp://legacy.local:631/jobs/42");
+        uint8_t job_state[] = {0, 0, 0, 3};
+        length = add_value(legacy, length, 0x23, "job-state", job_state,
+                           sizeof(job_state));
+    }
     legacy[length++] = 3;
 
     printer_target_t target = {0};
@@ -142,17 +175,36 @@ int main(void)
     snprintf(target.media_default, sizeof(target.media_default),
              "iso_a4_210x297mm");
     target.color = true;
+    target.printer_state = 3;
+    target.accepting_jobs = true;
+    target.accepting_jobs_known = true;
+    target.operations_supported = (1ULL << IPP_OPERATION_PRINT_JOB) |
+                                  (1ULL << 3) |
+                                  (1ULL << IPP_OPERATION_VALIDATE_JOB) |
+                                  (1ULL << IPP_OPERATION_CREATE_JOB) |
+                                  (1ULL << IPP_OPERATION_SEND_DOCUMENT) |
+                                  (1ULL << IPP_OPERATION_CANCEL_JOB) |
+                                  (1ULL << IPP_OPERATION_GET_JOB_ATTRIBUTES) |
+                                  (1ULL << IPP_OPERATION_GET_JOBS) |
+                                  (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
     ipp_codec_finalize_profile(&target);
 
     uint8_t *normalized = NULL;
     size_t normalized_length = 0;
     size_t attributes_length = 0;
-    if (ipp_codec_normalize_printer_response(
+    ipp_codec_result_t codec;
+    if (operation == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
+        codec = ipp_codec_normalize_printer_response(
             legacy, length, "ipp://127.0.0.1:18631/ipp/print",
             "ipp://127.0.0.1:18631", "oracle-bridge-uuid", &target,
-            &normalized, &normalized_length, &attributes_length) != IPP_CODEC_OK) {
-        close(client);
-        close(server);
+            &normalized, &normalized_length, &attributes_length);
+    } else {
+        codec = ipp_codec_rewrite(
+            legacy, length, "ipp://127.0.0.1:18631/ipp/print",
+            "ipp://127.0.0.1:18631", &normalized, &normalized_length,
+            &attributes_length);
+    }
+    if (codec != IPP_CODEC_OK) {
         return 1;
     }
     normalized[0] = body[0];
@@ -168,7 +220,38 @@ int main(void)
     int result = send_all(client, headers, (size_t)header_length) ||
                  send_all(client, normalized, normalized_length);
     free(normalized);
-    close(client);
-    close(server);
     return result ? 1 : 0;
+}
+
+int main(void)
+{
+    int server = socket(AF_INET, SOCK_STREAM, 0);
+    if (server < 0) {
+        return 1;
+    }
+    int reuse = 1;
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in address = {
+        .sin_family = AF_INET,
+        .sin_port = htons(18631),
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+    };
+    if (bind(server, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+        listen(server, 4) != 0) {
+        close(server);
+        return 1;
+    }
+    while (1) {
+        int client = accept(server, NULL, NULL);
+        if (client < 0) {
+            close(server);
+            return errno == EINTR ? 0 : 1;
+        }
+        int result = handle_client(client);
+        close(client);
+        if (result != 0) {
+            close(server);
+            return result;
+        }
+    }
 }

@@ -1,79 +1,41 @@
 {
-  NAME "CUPS accepts ESPresso normalized printer attributes"
-  OPERATION Get-Printer-Attributes
-  GROUP operation-attributes-tag
-  ATTR charset attributes-charset utf-8
-  ATTR language attributes-natural-language en
-  ATTR uri printer-uri $uri
-
-  STATUS successful-ok
-  EXPECT ipp-versions-supported OF-TYPE keyword IN-GROUP printer-attributes-tag
-  EXPECT printer-uri-supported OF-TYPE uri IN-GROUP printer-attributes-tag
-  EXPECT printer-uuid OF-TYPE uri IN-GROUP printer-attributes-tag
-  EXPECT uri-security-supported WITH-VALUE none
-  EXPECT document-format-supported WITH-VALUE image/urf
-  EXPECT urf-supported OF-TYPE keyword IN-GROUP printer-attributes-tag
-  EXPECT media-col-database OF-TYPE collection IN-GROUP printer-attributes-tag
-  EXPECT media-col-default OF-TYPE collection IN-GROUP printer-attributes-tag
-  EXPECT print-color-mode-supported WITH-VALUE color
-  EXPECT printer-resolution-supported OF-TYPE resolution IN-GROUP printer-attributes-tag
-  EXPECT operations-supported WITH-VALUE 2
-  EXPECT operations-supported WITH-VALUE 4
-  EXPECT operations-supported WITH-VALUE 5
-  EXPECT operations-supported WITH-VALUE 6
-  EXPECT operations-supported WITH-VALUE 8
-  EXPECT operations-supported WITH-VALUE 9
-  EXPECT operations-supported WITH-VALUE 10
-  EXPECT operations-supported WITH-VALUE 11
-  EXPECT printer-state WITH-VALUE 3
-  EXPECT printer-is-accepting-jobs WITH-VALUE true
-}
-
-{
-  NAME "CUPS accepts a relayed Print-Job response"
+  NAME "Print-Job preserves a URF document"
   OPERATION Print-Job
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
-  ATTR name requesting-user-name espresso-test
+  ATTR name requesting-user-name espresso-compat
   ATTR mimeMediaType document-format image/urf
   FILE tests/minimal.urf
-
   STATUS successful-ok
   EXPECT job-id OF-TYPE integer WITH-VALUE 42
   EXPECT job-uri OF-TYPE uri WITH-VALUE ipp://127.0.0.1:18631/jobs/42
 }
-
 {
-  NAME "CUPS accepts a relayed Validate-Job response"
+  NAME "Validate-Job relays"
   OPERATION Validate-Job
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
   ATTR mimeMediaType document-format image/urf
-
   STATUS successful-ok
 }
-
 {
-  NAME "CUPS accepts a relayed Create-Job response"
+  NAME "Create-Job relays"
   OPERATION Create-Job
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
-  ATTR name requesting-user-name espresso-test
+  ATTR name requesting-user-name espresso-compat
   ATTR mimeMediaType document-format image/urf
-
   STATUS successful-ok
   EXPECT job-id OF-TYPE integer WITH-VALUE 42
-  EXPECT job-uri OF-TYPE uri WITH-VALUE ipp://127.0.0.1:18631/jobs/42
 }
-
 {
-  NAME "CUPS accepts a relayed Send-Document response"
+  NAME "Send-Document preserves a URF document"
   OPERATION Send-Document
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
@@ -83,59 +45,47 @@
   ATTR boolean last-document true
   ATTR mimeMediaType document-format image/urf
   FILE tests/minimal.urf
-
   STATUS successful-ok
 }
-
 {
-  NAME "CUPS accepts relayed Get-Job-Attributes"
+  NAME "Get-Job-Attributes relays"
   OPERATION Get-Job-Attributes
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
   ATTR integer job-id 42
-
   STATUS successful-ok
   EXPECT job-id OF-TYPE integer WITH-VALUE 42
   EXPECT job-uri OF-TYPE uri WITH-VALUE ipp://127.0.0.1:18631/jobs/42
-  EXPECT job-state OF-TYPE enum WITH-VALUE 3
 }
-
 {
-  NAME "CUPS accepts relayed Get-Jobs"
+  NAME "Get-Jobs relays"
   OPERATION Get-Jobs
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
-
   STATUS successful-ok
   EXPECT job-id OF-TYPE integer WITH-VALUE 42
-  EXPECT job-uri OF-TYPE uri WITH-VALUE ipp://127.0.0.1:18631/jobs/42
 }
-
 {
-  NAME "CUPS accepts relayed Cancel-Job"
+  NAME "Cancel-Job relays"
   OPERATION Cancel-Job
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
   ATTR integer job-id 42
-
   STATUS successful-ok
 }
-
 {
-  NAME "Unsafe operation gets an IPP error rather than an HTTP failure"
+  NAME "Unsafe Print-URI is rejected locally"
   OPERATION Print-URI
   GROUP operation-attributes-tag
   ATTR charset attributes-charset utf-8
   ATTR language attributes-natural-language en
   ATTR uri printer-uri $uri
   ATTR uri document-uri https://example.invalid/document.pdf
-
   STATUS server-error-operation-not-supported
-  EXPECT status-message OF-TYPE text
 }

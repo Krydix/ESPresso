@@ -180,6 +180,123 @@ static void test_builds_cups_style_capability_query(void)
     free(request);
 }
 
+static void test_builds_format_specific_capability_query(void)
+{
+    uint8_t *request = NULL;
+    size_t request_length = 0;
+    assert(ipp_codec_build_get_printer_attributes_for_format(
+               1, 1, 77, "ipp://printer.local/ipp/print", false,
+               "image/urf", &request, &request_length) == IPP_CODEC_OK);
+    assert(contains(request, request_length, "document-format"));
+    assert(contains(request, request_length, "image/urf"));
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(request, request_length, &info) ==
+           IPP_CODEC_OK);
+    assert(info.operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
+    assert(info.request_id == 77);
+    assert(strcmp(info.document_format, "image/urf") == 0);
+    assert(!info.has_document);
+    assert(info.operation_attributes_valid);
+    free(request);
+}
+
+static void test_detects_wrong_operation_attribute_order(void)
+{
+    uint8_t message[256] = {2, 0, 0, 11, 0, 0, 0, 99, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x45, "printer-uri",
+                           "ipp://espresso.local/ipp/print");
+    message[length++] = 3;
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(message, length, &info) == IPP_CODEC_OK);
+    assert(!info.operation_attributes_valid);
+}
+
+static void test_filters_unrequested_printer_attributes(void)
+{
+    uint8_t message[512] = {2, 0, 0, 0, 0, 0, 0, 17, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    message[length++] = 4;
+    length = add_attribute(message, length, 0x45,
+                           "printer-uri-supported",
+                           "ipp://espresso.local/ipp/print");
+    length = add_attribute(message, length, 0x42, "printer-name", "ESPresso");
+    message[length++] = 3;
+    uint8_t *filtered = NULL;
+    size_t filtered_length = 0;
+    size_t attributes_length = 0;
+    assert(ipp_codec_filter_printer_response(
+               message, length, "printer-uri-supported", &filtered,
+               &filtered_length, &attributes_length) == IPP_CODEC_OK);
+    assert(contains(filtered, filtered_length, "printer-uri-supported"));
+    assert(!contains(filtered, filtered_length, "printer-name"));
+    assert(contains(filtered, filtered_length, "attributes-charset"));
+    free(filtered);
+}
+
+static void test_inspects_print_job_document(void)
+{
+    uint8_t message[256] = {2, 0, 0, 2, 0, 0, 0, 91, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47, "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x49, "document-format", "image/urf");
+    message[length++] = 3;
+    message[length++] = 'U';
+    message[length++] = 'N';
+    message[length++] = 'I';
+    message[length++] = 'R';
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(message, length, &info) == IPP_CODEC_OK);
+    assert(info.operation_id == IPP_OPERATION_PRINT_JOB);
+    assert(info.request_id == 91);
+    assert(info.has_document);
+    assert(strcmp(info.document_format, "image/urf") == 0);
+    assert(info.attributes_length == length - 4);
+}
+
+static void test_builds_parseable_ipp_error(void)
+{
+    uint8_t *response = NULL;
+    size_t response_length = 0;
+    assert(ipp_codec_build_status_response(
+               2, 0, IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED, 123,
+               "No relay", &response, &response_length) == IPP_CODEC_OK);
+    assert(response[0] == 2 && response[1] == 0);
+    assert(ipp_codec_message_code(response, response_length) ==
+           IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED);
+    assert(contains(response, response_length, "status-message"));
+    assert(contains(response, response_length, "No relay"));
+    free(response);
+}
+
+static void test_filters_operations_and_formats(void)
+{
+    uint64_t upstream = (1ULL << IPP_OPERATION_PRINT_JOB) |
+                        (1ULL << 3) |
+                        (1ULL << IPP_OPERATION_CREATE_JOB) |
+                        (1ULL << IPP_OPERATION_CANCEL_JOB);
+    uint64_t relayed = ipp_codec_relay_operations(upstream);
+    assert((relayed & (1ULL << IPP_OPERATION_PRINT_JOB)) != 0);
+    assert((relayed & (1ULL << IPP_OPERATION_CANCEL_JOB)) != 0);
+    assert((relayed & (1ULL << IPP_OPERATION_GET_PRINTER_ATTRIBUTES)) != 0);
+    assert((relayed & (1ULL << 3)) == 0);
+    assert((relayed & (1ULL << IPP_OPERATION_CREATE_JOB)) == 0);
+
+    printer_target_t target = {0};
+    strcpy(target.pdl, "image/urf,application/pdf");
+    assert(ipp_codec_format_supported(&target, "image/urf"));
+    assert(ipp_codec_format_supported(&target, "APPLICATION/PDF"));
+    assert(!ipp_codec_format_supported(&target, "image/pwg-raster"));
+}
+
 static void test_extracts_relayable_capability_profile(void)
 {
     uint8_t message[2048] = {1, 1, 0, 0, 0, 0, 0, 43, 1};
@@ -218,6 +335,14 @@ static void test_extracts_relayable_capability_profile(void)
     const uint8_t get_printer[] = {0, 0, 0, 11};
     length = add_raw_attribute(message, length, 0x23, "", get_printer,
                                sizeof(get_printer));
+    const uint8_t printer_state[] = {0, 0, 0, 3};
+    length = add_raw_attribute(message, length, 0x23, "printer-state",
+                               printer_state, sizeof(printer_state));
+    const uint8_t accepting[] = {1};
+    length = add_raw_attribute(message, length, 0x22,
+                               "printer-is-accepting-jobs", accepting,
+                               sizeof(accepting));
+    length = add_attribute(message, length, 0x44, "printer-state-reasons", "none");
     message[length++] = 3;
 
     printer_target_t target = {0};
@@ -240,6 +365,9 @@ static void test_extracts_relayable_capability_profile(void)
     assert((target.operations_supported & (1ULL << 2)) != 0);
     assert((target.operations_supported & (1ULL << 11)) != 0);
     assert(target.upstream_ipp_major == 1 && target.upstream_ipp_minor == 1);
+    assert(target.printer_state == 3);
+    assert(target.accepting_jobs && target.accepting_jobs_known);
+    assert(strcmp(target.state_reasons, "none") == 0);
 }
 
 int main(void)
@@ -250,6 +378,12 @@ int main(void)
     test_does_not_rewrite_unrelated_uri();
     test_normalizes_frontend_ipp_version();
     test_builds_cups_style_capability_query();
+    test_builds_format_specific_capability_query();
+    test_inspects_print_job_document();
+    test_detects_wrong_operation_attribute_order();
+    test_filters_unrequested_printer_attributes();
+    test_builds_parseable_ipp_error();
+    test_filters_operations_and_formats();
     test_extracts_relayable_capability_profile();
     puts("IPP codec tests passed");
     return 0;

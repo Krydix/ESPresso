@@ -101,6 +101,18 @@ esp_err_t app_state_set_target(const printer_target_t *target)
     return err;
 }
 
+esp_err_t app_state_update_target(const printer_target_t *target)
+{
+    if (!target || target->port == 0 || target->address[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_target = *target;
+    s_has_target = true;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
 bool app_state_get_target(printer_target_t *target)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);

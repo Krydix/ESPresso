@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ESPRESSO_PROFILE_SCHEMA 2
+#define ESPRESSO_PROFILE_SCHEMA 3
 #define ESPRESSO_INSTANCE_MAX 64
 #define ESPRESSO_HOST_MAX 64
 #define ESPRESSO_ADDRESS_MAX 48
@@ -17,6 +17,7 @@
 #define ESPRESSO_UUID_MAX 64
 #define ESPRESSO_IPP_VERSIONS_MAX 32
 #define ESPRESSO_COLOR_MODE_MAX 16
+#define ESPRESSO_STATE_REASONS_MAX 192
 
 /*
  * Compact, persistable result of the same DNS-SD + Get-Printer-Attributes
@@ -39,13 +40,17 @@ typedef struct {
     char uuid[ESPRESSO_UUID_MAX];
     char ipp_versions[ESPRESSO_IPP_VERSIONS_MAX];
     char color_mode_default[ESPRESSO_COLOR_MODE_MAX];
+    char state_reasons[ESPRESSO_STATE_REASONS_MAX];
     uint64_t operations_supported;
     uint16_t copies_upper;
     uint16_t resolution_low_dpi;
     uint16_t resolution_high_dpi;
     uint8_t upstream_ipp_major;
     uint8_t upstream_ipp_minor;
+    uint8_t printer_state;
     bool capability_queried;
+    bool accepting_jobs;
+    bool accepting_jobs_known;
     bool color;
     bool duplex;
     bool copies;

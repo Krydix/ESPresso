@@ -31,8 +31,12 @@ jobs:
       - name: Validate IPP with CUPS
         run: |
           sudo apt-get update
-          sudo apt-get install --yes cups-ipp-utils
+          sudo apt-get install --yes cups-ipp-utils libcups2-dev
           make test-cups
+          make test-compat
+
+      - name: Run codec sanitizers
+        run: make test-sanitize
 
       - name: Install ESP-IDF
         uses: espressif/install-esp-idf-action@v1

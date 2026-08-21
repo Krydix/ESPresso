@@ -16,7 +16,7 @@ define run_idf
 		idf.py -B "$(BUILD_DIR)" $(1)'
 endef
 
-.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups web-installer
+.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-sanitize web-installer
 
 help:
 	@printf '%s\n' \
@@ -27,6 +27,8 @@ help:
 		'  make flash-monitor PORT=... Build, flash, and monitor' \
 		'  make test                  Run host-side IPP codec tests' \
 		'  make test-cups             Validate normalized IPP with CUPS ipptool' \
+		'  make test-compat           Run the CUPS differential compatibility lab' \
+		'  make test-sanitize         Run codec tests with ASan and UBSan' \
 		'  make web-installer         Stage the GitHub Pages flasher' \
 		'  make size                  Show firmware size information'
 
@@ -69,6 +71,30 @@ test:
 test-cups:
 	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }
 	@sh scripts/test_cups_oracle.sh
+
+test-compat:
+	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }
+	@command -v cups-config >/dev/null || { echo "cups-config is required"; exit 1; }
+	@mkdir -p "$(BUILD_DIR)/host-tests"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -fPIC -shared \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/ipp_codec.c" \
+		"$(ROOT_DIR)/tests/compat/codec_bridge.c" \
+		-o "$(BUILD_DIR)/host-tests/libespresso_compat.so"
+	@python3 "$(ROOT_DIR)/tests/compat/compat_lab.py" \
+		--root "$(ROOT_DIR)" \
+		--library "$(BUILD_DIR)/host-tests/libespresso_compat.so" \
+		$(sort $(wildcard $(ROOT_DIR)/tests/compat/fixtures/*.json))
+
+test-sanitize:
+	@mkdir -p "$(BUILD_DIR)/host-tests"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/ipp_codec.c" \
+		"$(ROOT_DIR)/tests/test_ipp_codec.c" \
+		-o "$(BUILD_DIR)/host-tests/test_ipp_codec_sanitize"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_ipp_codec_sanitize"
 
 web-installer:
 	@python3 scripts/stage_web_installer.py \

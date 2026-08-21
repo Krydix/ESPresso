@@ -73,3 +73,32 @@ DEFINE IPP_URI_SCHEME "/^ipps?://.+$$/"
   ATTR mimeMediaType document-format image/pwg-raster
   STATUS client-error-document-format-not-supported
 }
+{
+  NAME "Only UTF-8 operation attributes are accepted"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset us-ascii
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  STATUS client-error-charset-not-supported
+}
+{
+  NAME "Print-Job requires a document payload"
+  OPERATION Print-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR mimeMediaType document-format image/urf
+  STATUS client-error-bad-request
+}
+{
+  NAME "Non-document operations reject trailing document data"
+  OPERATION Validate-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  FILE tests/minimal.urf
+  STATUS client-error-bad-request
+}

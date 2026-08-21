@@ -97,6 +97,12 @@ class Codec:
         self.lib.espresso_bridge_upstream_major.restype = ctypes.c_uint8
         self.lib.espresso_bridge_upstream_minor.argtypes = [ctypes.c_void_p]
         self.lib.espresso_bridge_upstream_minor.restype = ctypes.c_uint8
+        self.lib.espresso_bridge_plan.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(RequestInfo), ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8),
+            ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8),
+            ctypes.POINTER(ctypes.c_int)]
+        self.lib.espresso_bridge_plan.restype = ctypes.c_uint16
 
     @staticmethod
     def _input(data: bytes):
@@ -166,6 +172,25 @@ class Codec:
             return (int(self.lib.espresso_bridge_upstream_major(self.handle)),
                     int(self.lib.espresso_bridge_upstream_minor(self.handle)))
 
+    def plan(self, info: RequestInfo, content_length: int) -> dict:
+        response_major = ctypes.c_uint8()
+        response_minor = ctypes.c_uint8()
+        upstream_major = ctypes.c_uint8()
+        upstream_minor = ctypes.c_uint8()
+        document_operation = ctypes.c_int()
+        with self.lock:
+            status = self.lib.espresso_bridge_plan(
+                self.handle, ctypes.byref(info), content_length,
+                ctypes.byref(response_major), ctypes.byref(response_minor),
+                ctypes.byref(upstream_major), ctypes.byref(upstream_minor),
+                ctypes.byref(document_operation))
+        return {
+            "status": int(status),
+            "response_version": (response_major.value, response_minor.value),
+            "upstream_version": (upstream_major.value, upstream_minor.value),
+            "document_operation": bool(document_operation.value),
+        }
+
     def close(self):
         if self.handle:
             self.lib.espresso_bridge_delete(self.handle)
@@ -204,11 +229,104 @@ def operation_attributes() -> list[bytes]:
             ipp_attr(0x48, "attributes-natural-language", "en")]
 
 
+def parse_ipp_attributes(message: bytes) -> list[tuple[int, int, str, bytes]]:
+    """Return (group, value-tag, name, value) records from an IPP envelope."""
+    attributes = []
+    cursor = 8
+    group = 0
+    current_name = ""
+    while cursor < len(message):
+        tag = message[cursor]
+        cursor += 1
+        if tag == 0x03:
+            return attributes
+        if tag <= 0x0F:
+            group = tag
+            current_name = ""
+            continue
+        if cursor + 2 > len(message):
+            raise ValueError("truncated IPP attribute name")
+        name_length = struct.unpack("!H", message[cursor:cursor + 2])[0]
+        cursor += 2
+        if cursor + name_length + 2 > len(message):
+            raise ValueError("truncated IPP attribute")
+        if name_length:
+            current_name = message[cursor:cursor + name_length].decode(
+                "utf-8", errors="replace")
+        elif not current_name:
+            raise ValueError("IPP additional value has no preceding name")
+        cursor += name_length
+        value_length = struct.unpack("!H", message[cursor:cursor + 2])[0]
+        cursor += 2
+        if cursor + value_length > len(message):
+            raise ValueError("truncated IPP attribute value")
+        value = message[cursor:cursor + value_length]
+        cursor += value_length
+        attributes.append((group, tag, current_name, value))
+    raise ValueError("IPP message has no end-of-attributes tag")
+
+
+def integer_attribute(message: bytes, name: str) -> int | None:
+    for _group, tag, attribute_name, value in parse_ipp_attributes(message):
+        if attribute_name == name and tag in (0x21, 0x23) and len(value) == 4:
+            return struct.unpack("!I", value)[0]
+    return None
+
+
+def string_attribute(message: bytes, name: str) -> str | None:
+    for _group, _tag, attribute_name, value in parse_ipp_attributes(message):
+        if attribute_name == name:
+            return value.decode("utf-8", errors="replace")
+    return None
+
+
+def has_attribute(message: bytes, name: str) -> bool:
+    return any(attribute_name == name
+               for _group, _tag, attribute_name, _value
+               in parse_ipp_attributes(message))
+
+
 class LabState:
     def __init__(self, codec: Codec, fixture: dict):
         self.codec = codec
         self.fixture = fixture
         self.captured_documents: list[bytes] = []
+        self.jobs: dict[int, dict] = {}
+        self.next_job_id = 41
+
+    def new_job(self, request: bytes, document: bytes | None = None) -> dict:
+        self.next_job_id += 1
+        job = {
+            "id": self.next_job_id,
+            "state": 3,
+            "documents": [],
+            "name": string_attribute(request, "job-name") or "Untitled",
+            "user": string_attribute(request, "requesting-user-name") or "anonymous",
+        }
+        if document is not None:
+            job["documents"].append(document)
+            job["state"] = 9
+            self.captured_documents.append(document)
+        self.jobs[job["id"]] = job
+        return job
+
+    @staticmethod
+    def job_attributes(job: dict) -> list[bytes]:
+        job_id = job["id"]
+        reason = "job-canceled-by-user" if job["state"] == 7 else "none"
+        return [ipp_integer(0x21, "job-id", job_id),
+                ipp_attr(0x45, "job-uri",
+                         f"ipp://legacy.local:631/jobs/{job_id}"),
+                ipp_attr(0x45, "job-printer-uri",
+                         "ipp://legacy.local:631/ipp/print"),
+                ipp_attr(0x42, "job-name", job["name"]),
+                ipp_attr(0x42, "job-originating-user-name", job["user"]),
+                ipp_integer(0x23, "job-state", job["state"]),
+                ipp_attr(0x44, "job-state-reasons", reason),
+                ipp_integer(0x21, "time-at-creation", 0),
+                ipp_integer(0x21, "time-at-processing", 0),
+                ipp_integer(0x21, "time-at-completed", 0),
+                ipp_integer(0x21, "job-printer-up-time", 1)]
 
     def legacy_response(self, request: bytes) -> bytes:
         info = self.codec.inspect(request)
@@ -218,6 +336,10 @@ class LabState:
             return ipp_response(legacy_version, 0x0503, info.request_id,
                                 operation_attributes(), [])
         if info.operation_id == IPP_GET_PRINTER_ATTRIBUTES:
+            requested_format = bytes(info.document_format).split(b"\0", 1)[0].decode()
+            profile = dict(spec)
+            profile.update(spec.get("formatCapabilities", {}).get(
+                requested_format, {}))
             attrs: list[bytes] = []
             attrs.append(ipp_attr(0x44, "ipp-versions-supported",
                                   spec.get("version", "1.1")))
@@ -231,27 +353,27 @@ class LabState:
                 attrs.append(ipp_attr(0x49,
                                       "document-format-supported" if index == 0 else None,
                                       value))
-            for index, value in enumerate(spec.get("urf", [])):
+            for index, value in enumerate(profile.get("urf", [])):
                 attrs.append(ipp_attr(0x44, "urf-supported" if index == 0 else None,
                                       value))
-            for index, value in enumerate(spec.get("media", [])):
+            for index, value in enumerate(profile.get("media", [])):
                 attrs.append(ipp_attr(0x44, "media-supported" if index == 0 else None,
                                       value))
-            if spec.get("mediaDefault"):
-                attrs.append(ipp_attr(0x44, "media-default", spec["mediaDefault"]))
-            color_name = "output-mode-supported" if spec.get("oldOutputMode") else \
+            if profile.get("mediaDefault"):
+                attrs.append(ipp_attr(0x44, "media-default", profile["mediaDefault"]))
+            color_name = "output-mode-supported" if profile.get("oldOutputMode") else \
                          "print-color-mode-supported"
-            modes = ["monochrome", "color"] if spec.get("color", True) else ["monochrome"]
+            modes = ["monochrome", "color"] if profile.get("color", True) else ["monochrome"]
             for index, value in enumerate(modes):
                 attrs.append(ipp_attr(0x44, color_name if index == 0 else None, value))
-            default_name = "output-mode-default" if spec.get("oldOutputMode") else \
+            default_name = "output-mode-default" if profile.get("oldOutputMode") else \
                            "print-color-mode-default"
             attrs.append(ipp_attr(0x44, default_name,
-                                  "color" if spec.get("color", True) else "monochrome"))
+                                  "color" if profile.get("color", True) else "monochrome"))
             attrs.append(ipp_attr(0x22, "color-supported",
-                                  bytes([1 if spec.get("color", True) else 0])))
+                                  bytes([1 if profile.get("color", True) else 0])))
             sides = ["one-sided"] + (["two-sided-long-edge", "two-sided-short-edge"]
-                                      if spec.get("duplex", True) else [])
+                                      if profile.get("duplex", True) else [])
             for index, value in enumerate(sides):
                 attrs.append(ipp_attr(0x44, "sides-supported" if index == 0 else None,
                                       value))
@@ -272,18 +394,63 @@ class LabState:
             return ipp_response(legacy_version, 0, info.request_id,
                                 operation_attributes(), [(0x04, attrs)])
 
-        if info.operation_id in (IPP_PRINT_JOB, IPP_CREATE_JOB,
-                                  IPP_GET_JOB_ATTRIBUTES, IPP_GET_JOBS):
-            if info.operation_id == IPP_PRINT_JOB:
-                self.captured_documents.append(request[info.attributes_length:])
-            job = [ipp_integer(0x21, "job-id", 42),
-                   ipp_attr(0x45, "job-uri", "ipp://legacy.local:631/jobs/42"),
-                   ipp_integer(0x23, "job-state", 3),
-                   ipp_attr(0x44, "job-state-reasons", "none")]
+        if info.operation_id == IPP_PRINT_JOB:
+            job = self.new_job(request, request[info.attributes_length:])
             return ipp_response(legacy_version, 0, info.request_id,
-                                operation_attributes(), [(0x02, job)])
+                                operation_attributes(),
+                                [(0x02, self.job_attributes(job))])
+        if info.operation_id == IPP_CREATE_JOB:
+            job = self.new_job(request)
+            return ipp_response(legacy_version, 0, info.request_id,
+                                operation_attributes(),
+                                [(0x02, self.job_attributes(job))])
         if info.operation_id == IPP_SEND_DOCUMENT:
-            self.captured_documents.append(request[info.attributes_length:])
+            if not has_attribute(request, "last-document"):
+                return ipp_response(legacy_version, 0x0400, info.request_id,
+                                    operation_attributes(), [])
+            job_id = integer_attribute(request, "job-id")
+            job = self.jobs.get(job_id)
+            if not job:
+                return ipp_response(legacy_version, 0x0406, info.request_id,
+                                    operation_attributes(), [])
+            document = request[info.attributes_length:]
+            job["documents"].append(document)
+            job["state"] = 9
+            self.captured_documents.append(document)
+            return ipp_response(legacy_version, 0, info.request_id,
+                                operation_attributes(),
+                                [(0x02, self.job_attributes(job))])
+        if info.operation_id == IPP_GET_JOB_ATTRIBUTES:
+            job = self.jobs.get(integer_attribute(request, "job-id"))
+            if not job:
+                return ipp_response(legacy_version, 0x0406, info.request_id,
+                                    operation_attributes(), [])
+            return ipp_response(legacy_version, 0, info.request_id,
+                                operation_attributes(),
+                                [(0x02, self.job_attributes(job))])
+        if info.operation_id == IPP_GET_JOBS:
+            which_jobs = string_attribute(request, "which-jobs") or "not-completed"
+            completed = which_jobs == "completed"
+            groups = []
+            for job in self.jobs.values():
+                is_completed = job["state"] in (7, 8, 9)
+                if is_completed != completed:
+                    continue
+                attributes = self.job_attributes(job)
+                if not info.requested_attributes:
+                    attributes = attributes[:2]
+                groups.append((0x02, attributes))
+            return ipp_response(legacy_version, 0, info.request_id,
+                                operation_attributes(), groups)
+        if info.operation_id == IPP_CANCEL_JOB:
+            job = self.jobs.get(integer_attribute(request, "job-id"))
+            if not job:
+                return ipp_response(legacy_version, 0x0406, info.request_id,
+                                    operation_attributes(), [])
+            if job["state"] in (7, 8, 9):
+                return ipp_response(legacy_version, 0x0404, info.request_id,
+                                    operation_attributes(), [])
+            job["state"] = 7
         return ipp_response(legacy_version, 0, info.request_id,
                             operation_attributes(), [])
 
@@ -367,25 +534,15 @@ def make_proxy_handler(state: LabState):
             try:
                 request = self.read_ipp()
                 info = state.codec.inspect(request)
-                if (info.major, info.minor) not in ((1, 1), (2, 0)):
-                    self.send_ipp(state.codec.status(2, 0, 0x0503,
-                                                     info.request_id,
-                                                     "IPP version not supported"))
-                    return
-                if not (info.request_id and info.has_attributes_charset and
-                        info.has_natural_language and info.has_target_uri and
-                        info.operation_attributes_valid):
-                    self.local_status(info, 0x0400, "Missing operation attribute")
-                    return
-                operations = state.codec.operations()
-                if info.operation_id >= 64 or not operations & (1 << info.operation_id):
-                    self.local_status(info, 0x0501, "Operation is not safe to relay")
+                plan = state.codec.plan(info, len(request))
+                if plan["status"]:
+                    response_major, response_minor = plan["response_version"]
+                    self.send_ipp(state.codec.status(
+                        response_major, response_minor, plan["status"],
+                        info.request_id, "Request rejected by ESPresso relay policy"))
                     return
                 document_format = bytes(info.document_format).split(b"\0", 1)[0].decode()
-                if document_format and not state.codec.supports_format(document_format):
-                    self.local_status(info, 0x040A, "Document format not supported")
-                    return
-                upstream_major, upstream_minor = state.codec.upstream_version()
+                upstream_major, upstream_minor = plan["upstream_version"]
                 if info.operation_id == IPP_GET_PRINTER_ATTRIBUTES:
                     upstream = state.codec.query(upstream_major, upstream_minor,
                                                  info.request_id, document_format)
@@ -456,7 +613,7 @@ def run_ipptool(root: Path, uri: str, test_file: Path, plist_path: Path | None =
     command = ["ipptool", "-L"]
     if plist_path:
         command += ["-P", str(plist_path)]
-    elif test_file.name.startswith("ipp-"):
+    elif test_file.name.startswith("ipp-") or test_file.name == "rfc-core.test":
         command.append("-t")
     else:
         command.append("-q")
@@ -514,7 +671,11 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/job-flow.test")
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/job-state.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         root / "tests/compat/rfc-core.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        root / "tests/compat/requested-attributes.test")
             cups_data = Path(subprocess.check_output(
                 ["cups-config", "--datadir"], text=True).strip())
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
@@ -540,15 +701,110 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
         codec.close()
 
 
+def write_conformance_report(root: Path, library: Path, fixture_path: Path,
+                             output_path: Path):
+    """Gate promoted suites and report the remaining expected failures."""
+    fixture = json.loads(fixture_path.read_text())
+    codec = Codec(library, fixture)
+    state = LabState(codec, fixture)
+    legacy = ThreadingHTTPServer(("127.0.0.1", 18632), make_legacy_handler(state))
+    proxy = None
+    threading.Thread(target=legacy.serve_forever, daemon=True).start()
+    try:
+        probe(state)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 18631), make_proxy_handler(state))
+        threading.Thread(target=proxy.serve_forever, daemon=True).start()
+        cups_data = Path(subprocess.check_output(
+            ["cups-config", "--datadir"], text=True).strip())
+        suites = [
+            ("ipp-1.1", "1.1", cups_data / "ipptool/ipp-1.1.test", "pass"),
+            ("ipp-2.0", "2.0", cups_data / "ipptool/ipp-2.0.test", "fail"),
+            ("ipp-everywhere", "2.0", cups_data / "ipptool/ipp-everywhere.test",
+             "fail"),
+        ]
+        results = []
+        unexpected_outcome = False
+        for name, version, suite, expected in suites:
+            command = [
+                "ipptool", "-I", "-L", "-V", version,
+                "-f", str(root / "tests/minimal.urf"),
+                "-d", "NOPRINT=1", "-t",
+                "ipp://127.0.0.1:18631/ipp/print", str(suite),
+            ]
+            try:
+                completed = subprocess.run(
+                    command, cwd=root, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, timeout=120, check=False)
+                lines = completed.stdout.splitlines()
+                failures = [line.strip() for line in lines
+                            if "[FAIL]" in line or "EXPECTED:" in line]
+                passed = completed.returncode == 0 and not failures
+                outcome = "pass" if passed else "expected-fail"
+                unexpected = passed != (expected == "pass")
+                unexpected_outcome |= unexpected
+                results.append({
+                    "suite": name,
+                    "version": version,
+                    "expected": expected,
+                    "outcome": outcome,
+                    "unexpected": unexpected,
+                    "returnCode": completed.returncode,
+                    "failures": failures[:80],
+                    "outputTail": lines[-40:],
+                })
+            except subprocess.TimeoutExpired as error:
+                unexpected_outcome |= expected == "pass"
+                results.append({
+                    "suite": name,
+                    "version": version,
+                    "expected": expected,
+                    "outcome": "expected-fail-timeout",
+                    "unexpected": expected == "pass",
+                    "returnCode": None,
+                    "failures": ["suite exceeded the 120 second report limit"],
+                    "outputTail": (error.stdout or "").splitlines()[-40:]
+                    if isinstance(error.stdout, str) else [],
+                })
+        report = {
+            "schema": 1,
+            "oracle": "CUPS ipptool",
+            "cupsVersion": subprocess.check_output(
+                ["cups-config", "--version"], text=True).strip(),
+            "fixture": fixture_path.name,
+            "contract": "IPP/1.1 is required green; broader suites remain expected red",
+            "suites": results,
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, indent=2) + "\n")
+        for result in results:
+            print(f"{result['suite']}: {result['outcome']}")
+        print(f"Conformance roadmap written to {output_path}")
+        if unexpected_outcome:
+            raise AssertionError(
+                "a conformance suite outcome differs from the feature matrix")
+    finally:
+        if proxy:
+            proxy.shutdown()
+            proxy.server_close()
+        legacy.shutdown()
+        legacy.server_close()
+        codec.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--conformance-report", type=Path)
     parser.add_argument("fixtures", nargs="+", type=Path)
     args = parser.parse_args()
     for fixture in args.fixtures:
         validate_fixture(args.root.resolve(), args.library.resolve(), fixture.resolve())
     print(f"Compatibility lab: {len(args.fixtures)} fixture(s) passed")
+    if args.conformance_report:
+        write_conformance_report(
+            args.root.resolve(), args.library.resolve(), args.fixtures[0].resolve(),
+            args.conformance_report.resolve())
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f2f2f7">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <title>ESPresso — Web Installer</title>
-  <meta name="description" content="Install ESPresso on an ESP32-S3 from Chrome or Edge.">
+  <meta name="description" content="Install ESPresso on an ESP32, ESP32-S2, or ESP32-S3 from Chrome or Edge.">
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" defer></script>
   <style>
@@ -29,13 +29,13 @@
     <section class="hero">
       <div class="logo-wrap"><img class="logo" src="./logo.png" alt="ESPresso"></div>
       <h1>Your printer isn’t obsolete.</h1>
-      <p>Give a legacy AirPrint printer a current endpoint with one tiny ESP32‑S3 and a minute in your browser.</p>
+      <p>Give a legacy AirPrint printer a current endpoint with one tiny ESP32 and a minute in your browser.</p>
     </section>
 
     <section class="section" aria-labelledby="deviceHeading">
       <h2 class="section-title" id="deviceHeading">Your ESPresso</h2>
       <div class="group">
-        <div class="row"><span class="icon usb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v13m0-13-3 3m3-3 3 3M8 10H5v4m7 2-3 3m3-3 3 3m-6 0h6"/></svg></span><span class="copy"><span class="label">Hardware</span><span class="detail">Connect with a USB data cable</span></span><span class="value">ESP32‑S3</span></div>
+        <div class="row"><span class="icon usb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v13m0-13-3 3m3-3 3 3M8 10H5v4m7 2-3 3m3-3 3 3m-6 0h6"/></svg></span><span class="copy"><span class="label">Hardware</span><span class="detail">Automatically detected after connecting</span></span><span class="value">ESP32 / S2 / S3</span></div>
         <div class="row"><span class="icon firmware"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg></span><span class="copy"><span class="label">Firmware</span><span class="detail" id="buildDate">Loading build…</span></span><span class="value" id="firmwareVersion">Latest</span></div>
         <div class="row"><span class="icon wifi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M4.9 9.9a10 10 0 0 1 14.2 0M7.8 12.8a6 6 0 0 1 8.4 0m-5.6 2.9a2 2 0 0 1 2.8 0M12 19h.01"/></svg></span><span class="copy"><span class="label">Setup Wi‑Fi</span><span class="detail">Open network used only for onboarding</span></span><span class="value" id="setupSsid">ESPresso-DEV0</span></div>
       </div>
@@ -58,7 +58,7 @@
     <section class="section" aria-labelledby="nextHeading">
       <h2 class="section-title" id="nextHeading">What Happens Next</h2>
       <div class="group">
-        <div class="row"><span class="step-number">1</span><span class="copy"><span class="label">Flash ESPresso</span><span class="detail">Choose the connected ESP32‑S3 above</span></span><span class="chevron"></span></div>
+        <div class="row"><span class="step-number">1</span><span class="copy"><span class="label">Flash ESPresso</span><span class="detail">Choose your connected board; its chip is detected automatically</span></span><span class="chevron"></span></div>
         <div class="row"><span class="step-number">2</span><span class="copy"><span class="label">Scan the Wi‑Fi QR</span><span class="detail">Join the matching ESPresso setup network</span></span><span class="chevron"></span></div>
         <div class="row"><span class="step-number">3</span><span class="copy"><span class="label">Choose Wi‑Fi and Printer</span><span class="detail">The captive portal guides the remaining setup</span></span><span class="chevron"></span></div>
       </div>

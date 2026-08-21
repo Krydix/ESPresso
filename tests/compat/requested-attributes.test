@@ -1,0 +1,16 @@
+{
+  NAME "Exact requested-attributes are honored after normalization"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes printer-uri-supported,printer-state
+  STATUS successful-ok
+  EXPECT printer-uri-supported OF-TYPE uri
+  EXPECT printer-state OF-TYPE enum
+  EXPECT !document-format-supported
+  EXPECT !media-supported
+  EXPECT !printer-make-and-model
+  EXPECT !urf-supported
+}

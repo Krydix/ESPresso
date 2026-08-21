@@ -16,7 +16,86 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CUPS development tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cups-ipp-utils libcups2-dev
+
+      - name: Run host tests
+        run: make test
+
+      - name: Validate IPP with CUPS
+        run: |
+          make test-cups
+          make test-compat
+          make test-roadmap
+
+      - name: Record full CUPS conformance roadmap
+        run: make test-conformance-report
+
+      - name: Upload conformance roadmap
+        uses: actions/upload-artifact@v4
+        with:
+          name: cups-conformance-roadmap-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            build/esp32s3/host-tests/conformance-roadmap.json
+            build/esp32s3/host-tests/roadmap-probes.json
+          if-no-files-found: error
+
+      - name: Run codec sanitizers
+        run: make test-sanitize
+
+  firmware:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [esp32, esp32s2, esp32s3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set setup Wi-Fi identity
+        run: echo "ESPRESSO_SETUP_SUFFIX=$(git rev-parse HEAD | cut -c1-4 | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
+
+      - name: Install ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.4.1
+
+      - name: Build ${{ matrix.target }} firmware
+        run: |
+          IDF_TARGET=${{ matrix.target }} idf.py \
+            -B build/${{ matrix.target }} \
+            -D SDKCONFIG=build/${{ matrix.target }}/sdkconfig \
+            build
+
+      - name: Upload ${{ matrix.target }} build
+        uses: actions/upload-artifact@v4
+        with:
+          name: espresso-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            build/${{ matrix.target }}/flasher_args.json
+            build/${{ matrix.target }}/project_description.json
+            build/${{ matrix.target }}/*.bin
+            build/${{ matrix.target }}/bootloader/*.bin
+            build/${{ matrix.target }}/partition_table/*.bin
+
+  package:
+    needs: firmware
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -25,39 +104,25 @@ jobs:
       - name: Set setup Wi-Fi identity
         run: echo "ESPRESSO_SETUP_SUFFIX=$(git rev-parse HEAD | cut -c1-4 | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
 
-      - name: Run host tests
-        run: make test
-
-      - name: Validate IPP with CUPS
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes cups-ipp-utils libcups2-dev
-          make test-cups
-          make test-compat
-
-      - name: Run codec sanitizers
-        run: make test-sanitize
-
-      - name: Install ESP-IDF
-        uses: espressif/install-esp-idf-action@v1
+      - name: Download target builds
+        uses: actions/download-artifact@v4
         with:
-          version: v5.4.1
+          pattern: espresso-*
+          path: build-artifacts
 
-      - name: Build firmware
-        run: idf.py build
+      - name: Stage auto-detecting web installer
+        run: |
+          python3 scripts/stage_web_installer.py \
+            --build esp32=build-artifacts/espresso-esp32 \
+            --build esp32s2=build-artifacts/espresso-esp32s2 \
+            --build esp32s3=build-artifacts/espresso-esp32s3 \
+            --output-dir build/web-installer
 
-      - name: Stage web installer
-        run: make web-installer IDF_PATH="$IDF_PATH"
-
-      - name: Upload firmware artifact
+      - name: Upload packaged installer
         uses: actions/upload-artifact@v4
         with:
-          name: espresso-esp32s3-${{ github.sha }}
-          path: |
-            build/espresso.bin
-            build/bootloader/bootloader.bin
-            build/partition_table/partition-table.bin
-            build/flasher_args.json
+          name: espresso-web-installer
+          path: build/web-installer
 
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
@@ -73,7 +138,7 @@ jobs:
 
   deploy:
     if: github.event_name != 'pull_request'
-    needs: build
+    needs: package
     runs-on: ubuntu-latest
     environment:
       name: github-pages

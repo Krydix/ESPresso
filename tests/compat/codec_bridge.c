@@ -1,4 +1,5 @@
 #include "ipp_codec.h"
+#include "ipp_proxy_core.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,4 +137,34 @@ uint8_t espresso_bridge_upstream_major(const espresso_bridge_t *bridge)
 uint8_t espresso_bridge_upstream_minor(const espresso_bridge_t *bridge)
 {
     return bridge ? bridge->target.upstream_ipp_minor : 1;
+}
+
+uint16_t espresso_bridge_plan(const espresso_bridge_t *bridge,
+                              const ipp_request_info_t *request,
+                              size_t content_length, uint8_t *response_major,
+                              uint8_t *response_minor, uint8_t *upstream_major,
+                              uint8_t *upstream_minor, int *document_operation)
+{
+    if (!bridge || !request) {
+        return IPP_STATUS_CLIENT_ERROR_BAD_REQUEST;
+    }
+    ipp_proxy_plan_t plan;
+    ipp_proxy_plan_request(request, &bridge->target, content_length, &plan);
+    if (response_major) {
+        *response_major = plan.response_major;
+    }
+    if (response_minor) {
+        *response_minor = plan.response_minor;
+    }
+    if (upstream_major) {
+        *upstream_major = plan.upstream_major;
+    }
+    if (upstream_minor) {
+        *upstream_minor = plan.upstream_minor;
+    }
+    if (document_operation) {
+        *document_operation = plan.document_operation;
+    }
+    return plan.action == IPP_PROXY_RELAY ? IPP_STATUS_SUCCESSFUL_OK :
+                                            plan.status_code;
 }

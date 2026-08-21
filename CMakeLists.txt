@@ -22,4 +22,5 @@ endif()
 set(PROJECT_VER_NUMBER 1)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+idf_build_set_property(DEPENDENCIES_LOCK dependencies.lock.${IDF_TARGET})
 project(espresso)

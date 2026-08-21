@@ -18,8 +18,12 @@ using ESP-IDF for the actual network transport.
 | Advertise `_ipp._tcp,_universal` using real capabilities | ESP-IDF mDNS service and TXT record |
 | Present a modern queue identity | ESP-specific UUID, URI and IPP 1.1/2.0 facade |
 | Relay printer and job operations | Safe operation allowlist, validation, IPP errors, and version/URI translation |
-| Relay document data | Unchanged 4 KiB streaming path |
+| Relay document data | Unchanged 4 KiB streaming path with host-tested short-read/short-write handling |
 | Track live state | Refresh state and accepting-jobs metadata from capability responses |
+
+Request policy, streaming, and DNS-SD TXT generation are platform-neutral C modules.
+The firmware and host CUPS lab compile the same implementations, preventing the test
+facade from drifting into a second interpretation of the protocol.
 
 The selected profile is persisted in NVS. Its schema is versioned so firmware updates
 discard incompatible cached records instead of interpreting an old C structure.

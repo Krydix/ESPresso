@@ -1,0 +1,27 @@
+{
+  "name": "Conditional Format Printer",
+  "dns": {
+    "pdl": "image/urf,application/pdf",
+    "urf": "W8,SRGB24,RS300",
+    "media": ""
+  },
+  "ipp": {
+    "version": "1.1",
+    "rejectIpp20": true,
+    "pdl": ["image/urf", "application/pdf"],
+    "urf": [],
+    "media": [],
+    "operations": [2, 4, 5, 6, 8, 9, 10, 11],
+    "formatCapabilities": {
+      "image/urf": {
+        "urf": ["W8", "SRGB24", "RS300"],
+        "media": ["iso_a4_210x297mm"],
+        "mediaDefault": "iso_a4_210x297mm"
+      },
+      "application/pdf": {
+        "media": ["na_letter_8.5x11in"],
+        "mediaDefault": "na_letter_8.5x11in"
+      }
+    }
+  }
+}

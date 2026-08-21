@@ -9,5 +9,5 @@
   ATTR mimeMediaType document-format image/urf
   FILE $filename
   STATUS successful-ok
-  EXPECT job-id OF-TYPE integer WITH-VALUE 42
+  EXPECT job-id OF-TYPE integer WITH-VALUE >0
 }

@@ -4,7 +4,7 @@
 
 [![Build firmware and deploy installer](https://github.com/Krydix/ESPresso/actions/workflows/pages.yml/badge.svg)](https://github.com/Krydix/ESPresso/actions/workflows/pages.yml)
 
-ESPresso is an ESP32-S3 compatibility proxy for a deliberately narrow first target:
+ESPresso is an ESP32, ESP32-S2, and ESP32-S3 compatibility proxy for a deliberately narrow printer target:
 
 ```mermaid
 flowchart TD
@@ -28,7 +28,7 @@ document bytes to the printer.
 
 ## What is implemented
 
-- ESP32-S3 firmware built with ESP-IDF 5.4
+- ESP32, ESP32-S2, and ESP32-S3 firmware built from one source tree with ESP-IDF 5.4
 - first-boot `ESPresso-XXXX` SoftAP and captive portal, with a four-character build identity shared by the firmware and web installer
 - DNS funnel plus DHCP captive-portal URL (Option 114)
 - Wi-Fi scan, credential persistence, reconnect, and setup fallback
@@ -53,8 +53,8 @@ document bytes to the printer.
 - IPv4 preference with IPv6 fallback and correctly bracketed IPv6 IPP URIs
 - `Expect: 100-continue`, bounded receive retries, long streaming-job timeouts and
   strict IPP envelope/content-type validation
-- GitHub Actions firmware build, downloadable artifacts, and GitHub Pages deployment
-- ESP Web Tools installer manifest generated from ESP-IDF's own `flasher_args.json`
+- GitHub Actions matrix builds, per-target downloadable artifacts, and one GitHub Pages deployment
+- auto-detecting ESP Web Tools manifest generated from each target's own `flasher_args.json`
 - dual-slot OTA updates from the settings UI, using either the published GitHub Pages
   app image over verified HTTPS or a streamed custom `.bin` upload
 
@@ -64,7 +64,7 @@ document bytes to the printer.
 
 The `main` workflow publishes this browser flasher to GitHub Pages. On a fresh board:
 
-1. Open the [ESPresso web installer](https://krydix.github.io/ESPresso/) in desktop Chrome or Edge and connect an ESP32-S3 over USB.
+1. Open the [ESPresso web installer](https://krydix.github.io/ESPresso/) in desktop Chrome or Edge and connect an ESP32, ESP32-S2, or ESP32-S3 over USB. The installer detects the chip and selects its matching build automatically.
 2. Install ESPresso and wait for the board to restart.
 3. Join the open `ESPresso-XXXX` Wi-Fi network from a phone or laptop (or scan the matching Wi-Fi QR shown by the web installer).
 4. Use the captive portal to select the normal Wi-Fi network.
@@ -78,7 +78,8 @@ available at `espresso.local`.
 
 Open `http://espresso.local` and use **Firmware Update**. **Download and Install**
 pulls the current app image directly from the ESPresso GitHub Pages deployment over
-certificate-verified HTTPS. **Upload and Install** accepts a custom ESP32-S3 app
+certificate-verified HTTPS. Each chip downloads its own target-specific image.
+**Upload and Install** accepts a compatible ESP32 app
 binary and streams it to the device without buffering the whole file in memory.
 
 Both methods write the inactive app slot, validate the completed ESP image, switch
@@ -102,17 +103,29 @@ make test
 make test-cups
 make test-compat
 make test-sanitize
+make test-roadmap
+make test-conformance-report
 make build
 make web-installer
 make flash PORT=/dev/cu.usbmodemXXXX
 ```
 
-`test-cups` uses the system `ipptool` as an independent parser/oracle. Its suite
-currently exercises nine capability, job-operation, URI-rewrite, and error-response
-cases. `test-compat` adds a host-native legacy-printer emulator and proxy around the
-same codec used by the firmware, then runs CUPS semantic comparisons, RFC edge cases,
-job flows, exact 1 MiB document relays, IPP/1.1 fallback, chunked legacy responses,
-legacy attribute aliases, DNS-SD recovery, and malformed-response rejection.
+The default firmware target is `esp32s3`. Select another supported chip with
+`TARGET=esp32` or `TARGET=esp32s2`, for example `make build TARGET=esp32`.
+After building all three targets, `make web-installer-all` combines them into one
+installer manifest. The browser identifies the connected chip; no board selector is
+required.
+
+`test-cups` uses the system `ipptool` as an independent parser/oracle. `test-compat`
+adds a stateful host-native legacy-printer emulator around the same codec and relay
+policy used by the firmware, then runs CUPS semantic comparisons, RFC edge cases,
+multi-step job flows, exact 1 MiB document relays, IPP/1.1 fallback, chunked legacy
+responses, legacy attribute aliases, DNS-SD recovery, and malformed-response
+rejection. `test-conformance-report` requires the complete CUPS IPP/1.1 suite to pass
+and records IPP/2.0 and IPP Everywhere expected failures as a CI artifact.
+`test-roadmap` validates [the feature matrix](tests/feature-matrix.json) and executes
+the next-phase expected-failure probes, failing when an outcome changes without the
+matrix being promoted.
 See [docs/compatibility-lab.md](docs/compatibility-lab.md). `IDF_PATH`
 defaults to `~/esp/esp-idf` and can be overridden on the command line.
 
@@ -125,9 +138,12 @@ main/
   web_server.c          embedded setup/config UI and JSON API
   ota_update.c          streamed upload + certificate-verified GitHub Pages OTA
   printer_discovery.c   legacy printer discovery + AirPrint advertisement
+  printer_advertisement.c host-tested AirPrint DNS-SD TXT policy
   printer_capabilities.c CUPS-style active IPP probing with 1.1 fallback
   printer_identity.c    stable bridge identity distinct from the old printer
   ipp_proxy.c           bounded IPP envelope buffering + document streaming
+  ipp_proxy_core.c      host-tested production request relay policy
+  ipp_stream.c          bounded, short-I/O-safe document pump
   ipp_codec.c           allocation-bounded IPP attribute/URI transformation
   app_state.c           synchronized runtime state + NVS printer profile
 
@@ -136,6 +152,7 @@ web-installer/          GitHub Pages source
 scripts/                ESP-IDF flash-map → ESP Web Tools staging
 tests/                  host codec tests + live CUPS ipptool oracle fixture
   compat/               differential CUPS compatibility lab + printer fixtures
+  roadmap/              executable green/expected-red feature probes
 ```
 
 The request path buffers only the IPP attribute prefix (maximum 64 KiB), rewrites it,

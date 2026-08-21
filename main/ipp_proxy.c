@@ -10,6 +10,8 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "ipp_codec.h"
+#include "ipp_proxy_core.h"
+#include "ipp_stream.h"
 #include "printer_discovery.h"
 #include "printer_identity.h"
 
@@ -116,45 +118,37 @@ static esp_err_t receive_more(httpd_req_t *request, uint8_t **buffer, size_t *le
     return ESP_OK;
 }
 
+static int upstream_write(void *context, const uint8_t *data, size_t length)
+{
+    return esp_http_client_write((esp_http_client_handle_t)context,
+                                 (const char *)data, length);
+}
+
 static esp_err_t write_all(esp_http_client_handle_t client, const uint8_t *data,
                            size_t length)
 {
-    size_t sent = 0;
-    while (sent < length) {
-        int result = esp_http_client_write(client, (const char *)data + sent,
-                                           length - sent);
-        if (result <= 0) {
-            return ESP_FAIL;
-        }
-        sent += (size_t)result;
-    }
-    return ESP_OK;
+    return ipp_stream_write_all(upstream_write, client, data, length) ==
+                   IPP_STREAM_OK
+               ? ESP_OK
+               : ESP_FAIL;
+}
+
+static int downstream_read(void *context, uint8_t *buffer, size_t length)
+{
+    return receive_request((httpd_req_t *)context, (char *)buffer, length);
 }
 
 static esp_err_t stream_remaining_request(httpd_req_t *request,
                                           esp_http_client_handle_t client,
                                           size_t remaining)
 {
-    uint8_t *chunk = malloc(STREAM_CHUNK);
-    if (!chunk) {
+    ipp_stream_result_t result = ipp_stream_copy(
+        downstream_read, request, upstream_write, client, remaining,
+        STREAM_CHUNK);
+    if (result == IPP_STREAM_NO_MEMORY) {
         return ESP_ERR_NO_MEM;
     }
-    esp_err_t err = ESP_OK;
-    while (remaining > 0) {
-        size_t wanted = remaining < STREAM_CHUNK ? remaining : STREAM_CHUNK;
-        int received = receive_request(request, (char *)chunk, wanted);
-        if (received <= 0) {
-            err = ESP_FAIL;
-            break;
-        }
-        err = write_all(client, chunk, (size_t)received);
-        if (err != ESP_OK) {
-            break;
-        }
-        remaining -= (size_t)received;
-    }
-    free(chunk);
-    return err;
+    return result == IPP_STREAM_OK ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t read_upstream_response(esp_http_client_handle_t client,
@@ -260,66 +254,18 @@ static esp_err_t proxy_handler(httpd_req_t *request)
     }
     attributes_length = request_info.attributes_length;
 
-    if (!((request_info.major == 1 && request_info.minor == 1) ||
-          (request_info.major == 2 && request_info.minor == 0))) {
+    ipp_proxy_plan_t plan;
+    ipp_proxy_plan_request(&request_info, &target,
+                           (size_t)request->content_len, &plan);
+    if (plan.action == IPP_PROXY_LOCAL_STATUS) {
         ipp_request_info_t response_info = request_info;
-        response_info.major = 2;
-        response_info.minor = 0;
+        response_info.major = plan.response_major;
+        response_info.minor = plan.response_minor;
         free(prefix);
-        return send_ipp_status(
-            request, &response_info,
-            IPP_STATUS_SERVER_ERROR_VERSION_NOT_SUPPORTED,
-            "ESPresso supports IPP/1.1 and IPP/2.0");
+        return send_ipp_status(request, &response_info, plan.status_code,
+                               plan.status_message);
     }
-    if (request_info.request_id == 0 ||
-        !request_info.operation_attributes_valid ||
-        !request_info.has_attributes_charset ||
-        !request_info.has_natural_language || !request_info.has_target_uri) {
-        free(prefix);
-        return send_ipp_status(request, &request_info,
-                               IPP_STATUS_CLIENT_ERROR_BAD_REQUEST,
-                               "Missing required IPP operation attribute");
-    }
-    if (strcasecmp(request_info.attributes_charset, "utf-8") != 0) {
-        free(prefix);
-        return send_ipp_status(request, &request_info,
-                               IPP_STATUS_CLIENT_ERROR_CHARSET_NOT_SUPPORTED,
-                               "Only utf-8 IPP attributes are supported");
-    }
-
-    uint64_t relayed_operations = ipp_codec_relay_operations(
-        target.operations_supported);
-    if (request_info.operation_id >= 64 ||
-        (relayed_operations & (1ULL << request_info.operation_id)) == 0) {
-        free(prefix);
-        return send_ipp_status(request, &request_info,
-                               IPP_STATUS_SERVER_ERROR_OPERATION_NOT_SUPPORTED,
-                               "Operation is not supported by the selected printer");
-    }
-    bool document_operation =
-        request_info.operation_id == IPP_OPERATION_PRINT_JOB ||
-        request_info.operation_id == IPP_OPERATION_SEND_DOCUMENT;
-    if (request_info.operation_id == IPP_OPERATION_PRINT_JOB &&
-        (size_t)request->content_len == attributes_length) {
-        free(prefix);
-        return send_ipp_status(request, &request_info,
-                               IPP_STATUS_CLIENT_ERROR_BAD_REQUEST,
-                               "Print-Job requires document data");
-    }
-    if (!document_operation && (size_t)request->content_len != attributes_length) {
-        free(prefix);
-        return send_ipp_status(request, &request_info,
-                               IPP_STATUS_CLIENT_ERROR_BAD_REQUEST,
-                               "This operation cannot contain document data");
-    }
-    if (request_info.document_format[0] &&
-        !ipp_codec_format_supported(&target, request_info.document_format)) {
-        free(prefix);
-        return send_ipp_status(
-            request, &request_info,
-            IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED,
-            "Document format is not accepted unchanged by the selected printer");
-    }
+    bool document_operation = plan.document_operation;
 
     char upstream_url[ESPRESSO_ADDRESS_MAX + ESPRESSO_PATH_MAX + 32];
     char upstream_printer_uri[sizeof(upstream_url)];
@@ -350,10 +296,8 @@ static esp_err_t proxy_handler(httpd_req_t *request)
     uint8_t client_major = request_info.major;
     uint8_t client_minor = request_info.minor;
     uint16_t operation_id = request_info.operation_id;
-    uint8_t upstream_major = target.capability_queried &&
-                             target.upstream_ipp_major >= 2 ?
-                             target.upstream_ipp_major : 1;
-    uint8_t upstream_minor = upstream_major >= 2 ? target.upstream_ipp_minor : 1;
+    uint8_t upstream_major = plan.upstream_major;
+    uint8_t upstream_minor = plan.upstream_minor;
     if (operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
         uint8_t *capability_request = NULL;
         size_t capability_request_length = 0;

@@ -11,6 +11,7 @@
 #include "lwip/inet.h"
 #include "mdns.h"
 #include "ipp_codec.h"
+#include "printer_advertisement.h"
 #include "printer_capabilities.h"
 #include "printer_identity.h"
 
@@ -298,62 +299,27 @@ esp_err_t printer_discovery_advertise_selected(void)
 
     char uuid[ESPRESSO_UUID_MAX];
     printer_identity_uuid(uuid, sizeof(uuid));
-    snprintf(s_service_instance, sizeof(s_service_instance), "ESPresso - %.51s",
-             target.label[0] ? target.label : target.instance);
-    char admin_url[] = "http://espresso.local/";
-    char product[ESPRESSO_LABEL_MAX + 3];
-    snprintf(product, sizeof(product), "(%s)",
-             target.label[0] ? target.label : "Legacy AirPrint printer");
-    char color[] = "F";
-    char duplex[] = "F";
-    char copies[] = "F";
-    char collate[] = "F";
-    char printer_state[4];
-    snprintf(printer_state, sizeof(printer_state), "%u",
-             target.printer_state ? target.printer_state : 3);
-    if (target.color) {
-        color[0] = 'T';
+    printer_advertisement_t advertisement;
+    printer_advertisement_build(&target, uuid, &advertisement);
+    snprintf(s_service_instance, sizeof(s_service_instance), "%s",
+             advertisement.instance);
+    printer_txt_item_t generic_txt[ESPRESSO_DNSSD_TXT_MAX];
+    mdns_txt_item_t txt[ESPRESSO_DNSSD_TXT_MAX];
+    size_t txt_count = printer_advertisement_txt(
+        &advertisement, generic_txt, ESPRESSO_DNSSD_TXT_MAX);
+    for (size_t i = 0; i < txt_count; ++i) {
+        txt[i].key = generic_txt[i].key;
+        txt[i].value = generic_txt[i].value;
     }
-    if (target.duplex) {
-        duplex[0] = 'T';
-    }
-    if (target.copies) {
-        copies[0] = 'T';
-    }
-    if (target.collate) {
-        collate[0] = 'T';
-    }
-    const char *note = target.location[0] ? target.location :
-                                            "Legacy printer bridged by ESPresso";
-    char pdl[252];
-    snprintf(pdl, sizeof(pdl), "%.251s", target.pdl);
-    const char *make_model = target.label[0] ? target.label : target.instance;
-    mdns_txt_item_t txt[] = {
-        {"txtvers", "1"},
-        {"qtotal", "1"},
-        {"rp", "ipp/print"},
-        {"ty", make_model},
-        {"product", product},
-        {"pdl", pdl},
-        {"URF", target.urf},
-        {"Color", color},
-        {"Duplex", duplex},
-        {"Copies", copies},
-        {"Collate", collate},
-        {"Transparent", "T"},
-        {"Binary", "T"},
-        {"printer-state", printer_state},
-        {"kind", "document"},
-        {"priority", "0"},
-        {"adminurl", admin_url},
-        {"UUID", uuid},
-        {"note", note},
-    };
-    ESP_RETURN_ON_ERROR(mdns_service_add(s_service_instance, "_ipp", "_tcp", 631,
-                                         txt, sizeof(txt) / sizeof(txt[0])),
+    ESP_RETURN_ON_ERROR(mdns_service_add(s_service_instance,
+                                         ESPRESSO_DNSSD_SERVICE,
+                                         ESPRESSO_DNSSD_PROTOCOL, 631,
+                                         txt, txt_count),
                         TAG, "IPP advertisement failed");
     ESP_RETURN_ON_ERROR(mdns_service_subtype_add_for_host(
-                            s_service_instance, "_ipp", "_tcp", NULL, "_universal"),
+                            s_service_instance, ESPRESSO_DNSSD_SERVICE,
+                            ESPRESSO_DNSSD_PROTOCOL, NULL,
+                            ESPRESSO_DNSSD_SUBTYPE),
                         TAG, "AirPrint subtype failed");
     ESP_LOGI(TAG, "advertising modern AirPrint facade for %s", target.instance);
     return ESP_OK;

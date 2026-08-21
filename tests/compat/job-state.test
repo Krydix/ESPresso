@@ -1,0 +1,80 @@
+{
+  NAME "Create a stateful job"
+  OPERATION Create-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR name requesting-user-name espresso-state-test
+  ATTR mimeMediaType document-format image/urf
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE >0
+}
+{
+  NAME "Created job can be queried"
+  OPERATION Get-Job-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id $job-id
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+  EXPECT job-state OF-TYPE enum WITH-VALUE 3
+}
+{
+  NAME "Document is attached to the created job"
+  OPERATION Send-Document
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id $job-id
+  ATTR boolean last-document true
+  ATTR mimeMediaType document-format image/urf
+  FILE tests/minimal.urf
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE $job-id
+}
+{
+  NAME "Unknown job IDs are not fabricated"
+  OPERATION Get-Job-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id 2147483647
+  STATUS client-error-not-found
+}
+{
+  NAME "Unknown jobs cannot be canceled"
+  OPERATION Cancel-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id 2147483647
+  STATUS client-error-not-found
+}
+{
+  NAME "Create a pending job for cancellation"
+  OPERATION Create-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR name requesting-user-name espresso-state-test
+  ATTR mimeMediaType document-format image/urf
+  STATUS successful-ok
+  EXPECT job-id OF-TYPE integer WITH-VALUE >0
+}
+{
+  NAME "A pending job can be canceled"
+  OPERATION Cancel-Job
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR integer job-id $job-id
+  STATUS successful-ok
+}

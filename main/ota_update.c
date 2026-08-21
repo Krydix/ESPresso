@@ -16,7 +16,9 @@
 #include "freertos/task.h"
 
 #ifndef ESPRESSO_OTA_URL
-#define ESPRESSO_OTA_URL "https://krydix.github.io/ESPresso/firmware/espresso.bin"
+#define ESPRESSO_OTA_URL                                                        \
+    "https://krydix.github.io/ESPresso/firmware/" CONFIG_IDF_TARGET            \
+    "/espresso.bin"
 #endif
 
 static const char *TAG = "espresso_ota";

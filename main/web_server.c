@@ -319,7 +319,7 @@ static esp_err_t update_upload_handler(httpd_req_t *request)
     error = ota_update_finish_upload();
     if (error != ESP_OK) {
         return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
-                                   "The upload is not a valid ESP32-S3 app firmware image");
+                                   "The upload is not a compatible ESP32 app firmware image");
     }
     ota_update_status_t status;
     ota_update_get_status(&status);

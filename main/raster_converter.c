@@ -136,7 +136,10 @@ static uint8_t media_type(const uint8_t *header)
         "photographic-glossy", "photographic-high-gloss", "other",
     };
     const char *input = (const char *)header + 128;
-    size_t input_length = strnlen(input, 64);
+    size_t input_length = 0;
+    while (input_length < 64 && input[input_length] != '\0') {
+        ++input_length;
+    }
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
         size_t length = strlen(values[i]);
         if (input_length == length && memcmp(input, values[i], length) == 0) {

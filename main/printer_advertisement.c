@@ -19,7 +19,7 @@ void printer_advertisement_build(const printer_target_t *target,
     }
     if (*identity_suffix) {
         snprintf(advertisement->instance, sizeof(advertisement->instance),
-                 "ESPresso - %.46s (%.4s)", label, identity_suffix);
+                 "ESPresso - %.45s (%.4s)", label, identity_suffix);
     } else {
         snprintf(advertisement->instance, sizeof(advertisement->instance),
                  "ESPresso - %.51s", label);

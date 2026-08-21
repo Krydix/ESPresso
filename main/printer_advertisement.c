@@ -5,6 +5,7 @@
 
 void printer_advertisement_build(const printer_target_t *target,
                                  const char *bridge_uuid,
+                                 const char *custom_name,
                                  printer_advertisement_t *advertisement)
 {
     memset(advertisement, 0, sizeof(*advertisement));
@@ -17,7 +18,10 @@ void printer_advertisement_build(const printer_target_t *target,
     if (uuid_length > 4) {
         identity_suffix += uuid_length - 4;
     }
-    if (*identity_suffix) {
+    if (custom_name && custom_name[0]) {
+        snprintf(advertisement->instance, sizeof(advertisement->instance),
+                 "%s", custom_name);
+    } else if (*identity_suffix) {
         snprintf(advertisement->instance, sizeof(advertisement->instance),
                  "ESPresso - %.45s (%.4s)", label, identity_suffix);
     } else {

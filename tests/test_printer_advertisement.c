@@ -29,7 +29,8 @@ static void test_builds_truthful_airprint_record(void)
     target.printer_state = 4;
 
     printer_advertisement_t advertisement;
-    printer_advertisement_build(&target, "bridge-test-uuid", &advertisement);
+    printer_advertisement_build(&target, "bridge-test-uuid", NULL,
+                                &advertisement);
     printer_txt_item_t items[ESPRESSO_DNSSD_TXT_MAX];
     size_t count = printer_advertisement_txt(
         &advertisement, items, ESPRESSO_DNSSD_TXT_MAX);
@@ -59,9 +60,9 @@ static void test_bridge_identity_avoids_service_name_collisions(void)
     printer_advertisement_t first;
     printer_advertisement_t second;
     printer_advertisement_build(
-        &target, "00000000-0000-4000-8000-00000000a123", &first);
+        &target, "00000000-0000-4000-8000-00000000a123", NULL, &first);
     printer_advertisement_build(
-        &target, "00000000-0000-4000-8000-00000000b456", &second);
+        &target, "00000000-0000-4000-8000-00000000b456", NULL, &second);
     assert(strcmp(first.instance, second.instance) != 0);
     assert(strstr(first.instance, "(a123)") != NULL);
     assert(strstr(second.instance, "(b456)") != NULL);
@@ -74,7 +75,7 @@ static void test_uses_conservative_defaults(void)
     snprintf(target.pdl, sizeof(target.pdl), "image/urf");
     snprintf(target.urf, sizeof(target.urf), "W8,RS300");
     printer_advertisement_t advertisement;
-    printer_advertisement_build(&target, "", &advertisement);
+    printer_advertisement_build(&target, "", NULL, &advertisement);
     printer_txt_item_t items[ESPRESSO_DNSSD_TXT_MAX];
     size_t count = printer_advertisement_txt(
         &advertisement, items, ESPRESSO_DNSSD_TXT_MAX);
@@ -86,11 +87,23 @@ static void test_uses_conservative_defaults(void)
     assert(strstr(value_for(items, count, "pdl"), "image/pwg-raster") == NULL);
 }
 
+static void test_custom_name_replaces_generated_service_name(void)
+{
+    printer_target_t target = {0};
+    snprintf(target.label, sizeof(target.label), "TestCo Legacy 500");
+    printer_advertisement_t advertisement;
+    printer_advertisement_build(&target, "bridge-test-uuid", "Office Printer",
+                                &advertisement);
+    assert(strcmp(advertisement.instance, "Office Printer") == 0);
+    assert(strcmp(advertisement.make_model, "TestCo Legacy 500") == 0);
+}
+
 int main(void)
 {
     test_builds_truthful_airprint_record();
     test_uses_conservative_defaults();
     test_bridge_identity_avoids_service_name_collisions();
+    test_custom_name_replaces_generated_service_name();
     puts("DNS-SD advertisement tests passed");
     return 0;
 }

@@ -1,6 +1,7 @@
 #include "app_state.h"
 
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -17,6 +18,7 @@ static char s_wifi_ssid[33];
 static char s_wifi_ip[ESPRESSO_ADDRESS_MAX];
 static bool s_has_target;
 static printer_target_t s_target;
+static char s_printer_name[ESPRESSO_PRINTER_NAME_MAX];
 
 static void copy_string(char *destination, size_t size, const char *source)
 {
@@ -24,6 +26,38 @@ static void copy_string(char *destination, size_t size, const char *source)
         return;
     }
     snprintf(destination, size, "%s", source ? source : "");
+}
+
+static bool ascii_whitespace(char value)
+{
+    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+}
+
+static esp_err_t normalize_printer_name(const char *name, char *normalized,
+                                        size_t normalized_size)
+{
+    if (!name || !normalized || normalized_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    while (ascii_whitespace(*name)) {
+        ++name;
+    }
+    size_t length = strlen(name);
+    while (length > 0 && ascii_whitespace(name[length - 1])) {
+        --length;
+    }
+    if (length >= normalized_size) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char value = (unsigned char)name[i];
+        if (value < 0x20 || value == 0x7f) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    memcpy(normalized, name, length);
+    normalized[length] = '\0';
+    return ESP_OK;
 }
 
 esp_err_t app_state_init(void)
@@ -34,7 +68,7 @@ esp_err_t app_state_init(void)
     }
 
     nvs_handle_t nvs;
-    esp_err_t err = nvs_open("espresso", NVS_READONLY, &nvs);
+    esp_err_t err = nvs_open("espresso", NVS_READWRITE, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGI(TAG, "no persisted printer selection");
         return ESP_OK;
@@ -45,10 +79,52 @@ esp_err_t app_state_init(void)
         return err;
     }
 
+    memset(&s_target, 0, sizeof(s_target));
     size_t size = sizeof(s_target);
-    err = nvs_get_blob(nvs, "printer", &s_target, &size);
+    esp_err_t target_err = nvs_get_blob(nvs, "printer", &s_target, &size);
+    size_t name_size = sizeof(s_printer_name);
+    esp_err_t name_err = nvs_get_str(nvs, "printer_name", s_printer_name,
+                                     &name_size);
+
+    /* Schema 5 only appends admin_url. Preserve schema-4 selections across
+     * OTA and leave the new field empty until the next capability refresh. */
+    const size_t alignment = _Alignof(printer_target_t);
+    const size_t legacy_size =
+        (offsetof(printer_target_t, admin_url) + alignment - 1) & ~(alignment - 1);
+    bool migrated_target = target_err == ESP_OK && size == legacy_size &&
+                           s_target.profile_schema == 4;
+    if (migrated_target) {
+        memset(s_target.admin_url, 0, sizeof(s_target.admin_url));
+        s_target.profile_schema = ESPRESSO_PROFILE_SCHEMA;
+        target_err = nvs_set_blob(nvs, "printer", &s_target, sizeof(s_target));
+        if (target_err == ESP_OK) {
+            target_err = nvs_commit(nvs);
+        }
+        if (target_err == ESP_OK) {
+            size = sizeof(s_target);
+            ESP_LOGI(TAG, "migrated persisted printer profile from schema 4");
+        }
+    }
     nvs_close(nvs);
-    if (err == ESP_OK && size == sizeof(s_target) &&
+
+    if (name_err == ESP_OK) {
+        char normalized[ESPRESSO_PRINTER_NAME_MAX];
+        if (normalize_printer_name(s_printer_name, normalized,
+                                   sizeof(normalized)) == ESP_OK &&
+            normalized[0] != '\0') {
+            copy_string(s_printer_name, sizeof(s_printer_name), normalized);
+            ESP_LOGI(TAG, "restored AirPrint name '%s'", s_printer_name);
+        } else {
+            ESP_LOGW(TAG, "discarding invalid persisted AirPrint name");
+            s_printer_name[0] = '\0';
+        }
+    } else if (name_err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "could not restore AirPrint name: %s",
+                 esp_err_to_name(name_err));
+        s_printer_name[0] = '\0';
+    }
+
+    if (target_err == ESP_OK && size == sizeof(s_target) &&
         s_target.profile_schema == ESPRESSO_PROFILE_SCHEMA && s_target.port != 0 &&
         s_target.address[0] != '\0') {
         ipp_codec_finalize_profile(&s_target);
@@ -60,15 +136,16 @@ esp_err_t app_state_init(void)
     }
     uint32_t stored_schema = s_target.profile_schema;
     memset(&s_target, 0, sizeof(s_target));
-    if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_INVALID_LENGTH ||
-        (err == ESP_OK && size != sizeof(s_target))) {
+    if (target_err == ESP_ERR_NVS_NOT_FOUND ||
+        target_err == ESP_ERR_NVS_INVALID_LENGTH ||
+        (target_err == ESP_OK && size != sizeof(s_target))) {
         ESP_LOGW(TAG,
                  "discarding incompatible printer selection: read=%s size=%u expected=%u",
-                 esp_err_to_name(err), (unsigned)size,
+                 esp_err_to_name(target_err), (unsigned)size,
                  (unsigned)sizeof(s_target));
         return ESP_OK;
     }
-    if (err == ESP_OK) {
+    if (target_err == ESP_OK) {
         ESP_LOGW(TAG,
                  "discarding invalid printer selection: schema=%" PRIu32
                  " expected=%u",
@@ -76,8 +153,8 @@ esp_err_t app_state_init(void)
         return ESP_OK;
     }
     ESP_LOGE(TAG, "could not read persisted printer selection: %s",
-             esp_err_to_name(err));
-    return err;
+             esp_err_to_name(target_err));
+    return target_err;
 }
 
 void app_state_set_wifi(bool connected, const char *ssid, const char *ip_address)
@@ -179,4 +256,53 @@ esp_err_t app_state_clear_target(void)
         ESP_LOGW(TAG, "printer selection explicitly cleared");
     }
     return err;
+}
+
+esp_err_t app_state_set_printer_name(const char *name)
+{
+    char normalized[ESPRESSO_PRINTER_NAME_MAX];
+    esp_err_t err = normalize_printer_name(name, normalized,
+                                           sizeof(normalized));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    nvs_handle_t nvs;
+    err = nvs_open("espresso", NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (normalized[0]) {
+        err = nvs_set_str(nvs, "printer_name", normalized);
+    } else {
+        err = nvs_erase_key(nvs, "printer_name");
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+        }
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    if (err == ESP_OK) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        copy_string(s_printer_name, sizeof(s_printer_name), normalized);
+        xSemaphoreGive(s_lock);
+        if (normalized[0]) {
+            ESP_LOGI(TAG, "saved AirPrint name '%s'", normalized);
+        } else {
+            ESP_LOGI(TAG, "restored generated AirPrint name");
+        }
+    }
+    return err;
+}
+
+void app_state_get_printer_name(char *name, size_t name_size)
+{
+    if (!name || name_size == 0) {
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    copy_string(name, name_size, s_printer_name);
+    xSemaphoreGive(s_lock);
 }

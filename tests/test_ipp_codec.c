@@ -126,7 +126,7 @@ static void test_reports_incomplete_message(void)
     assert(output == NULL);
 }
 
-static void test_does_not_rewrite_unrelated_uri(void)
+static void test_rewrites_printer_landing_page(void)
 {
     uint8_t message[256] = {2, 0, 0, 2, 0, 0, 0, 9, 1};
     size_t length = 9;
@@ -139,7 +139,8 @@ static void test_does_not_rewrite_unrelated_uri(void)
     assert(ipp_codec_rewrite(message, length, "ipp://espresso.local/ipp/print",
                              "ipp://espresso.local", &output, &output_length,
                              &attributes_length) == IPP_CODEC_OK);
-    assert(contains(output, output_length, original));
+    assert(!contains(output, output_length, original));
+    assert(contains(output, output_length, "http://espresso.local/"));
     free(output);
 }
 
@@ -263,6 +264,9 @@ static void test_normalizes_frontend_ipp_version(void)
     assert(contains(output, output_length, "media-col-default"));
     assert(contains(output, output_length, "media-col-supported"));
     assert(contains(output, output_length, "media-col-ready"));
+    assert(contains(output, output_length, "media-key-supported"));
+    assert(contains(output, output_length, "media-size-supported"));
+    assert(contains(output, output_length, "reference-uri-schemes-supported"));
     assert(contains(output, output_length, "media-source-supported"));
     assert(contains(output, output_length, "media-type-supported"));
     assert(contains(output, output_length, "printer-input-tray"));
@@ -622,6 +626,7 @@ static void test_inspects_print_job_document(void)
     size_t length = 9;
     length = add_attribute(message, length, 0x47, "attributes-charset", "utf-8");
     length = add_attribute(message, length, 0x49, "document-format", "image/urf");
+    length = add_attribute(message, length, 0x42, "job-name", "Vacation Photo");
     message[length++] = 3;
     message[length++] = 'U';
     message[length++] = 'N';
@@ -633,7 +638,32 @@ static void test_inspects_print_job_document(void)
     assert(info.request_id == 91);
     assert(info.has_document);
     assert(strcmp(info.document_format, "image/urf") == 0);
+    assert(strcmp(info.job_name, "Vacation Photo") == 0);
     assert(info.attributes_length == length - 4);
+}
+
+static void test_inspects_multi_document_job_fields(void)
+{
+    uint8_t message[256] = {2, 0, 0, 6, 0, 0, 0, 92, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47, "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    const uint8_t job_id[] = {0, 0, 0, 42};
+    length = add_raw_attribute(message, length, 0x21, "job-id", job_id,
+                               sizeof(job_id));
+    const uint8_t last_document[] = {1};
+    length = add_raw_attribute(message, length, 0x22, "last-document",
+                               last_document, sizeof(last_document));
+    message[length++] = 3;
+
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(message, length, &info) == IPP_CODEC_OK);
+    assert(info.has_job_id && info.job_id == 42);
+    assert(info.has_last_document && info.last_document);
+    uint32_t extracted = 0;
+    assert(ipp_codec_get_u32_attribute(message, length, "job-id", &extracted));
+    assert(extracted == 42);
 }
 
 static void test_builds_parseable_ipp_error(void)
@@ -679,6 +709,8 @@ static void test_extracts_relayable_capability_profile(void)
     message[length++] = 4;
     length = add_attribute(message, length, 0x41, "printer-make-and-model",
                            "TestCo Legacy 500");
+    length = add_attribute(message, length, 0x45, "printer-more-info",
+                           "http://legacy-printer.local/");
     length = add_attribute(message, length, 0x45, "printer-uuid",
                            "urn:uuid:physical-printer");
     length = add_attribute(message, length, 0x44, "ipp-versions-supported", "1.1");
@@ -727,6 +759,7 @@ static void test_extracts_relayable_capability_profile(void)
     assert(ipp_codec_apply_printer_attributes(message, length, &target) ==
            IPP_CODEC_OK);
     assert(strcmp(target.label, "TestCo Legacy 500") == 0);
+    assert(strcmp(target.admin_url, "http://legacy-printer.local/") == 0);
     assert(strcmp(target.uuid, "physical-printer") == 0);
     assert(contains((const uint8_t *)target.pdl, strlen(target.pdl), "image/urf"));
     assert(contains((const uint8_t *)target.pdl, strlen(target.pdl), "application/pdf"));
@@ -755,12 +788,13 @@ int main(void)
     test_rewrites_printer_uri_and_preserves_document();
     test_rewrites_job_uri_authority();
     test_reports_incomplete_message();
-    test_does_not_rewrite_unrelated_uri();
+    test_rewrites_printer_landing_page();
     test_consumes_facade_defaults_and_translates_legacy_color();
     test_normalizes_frontend_ipp_version();
     test_builds_cups_style_capability_query();
     test_builds_format_specific_capability_query();
     test_inspects_print_job_document();
+    test_inspects_multi_document_job_fields();
     test_detects_wrong_operation_attribute_order();
     test_filters_unrequested_printer_attributes();
     test_expands_requested_printer_attribute_groups();

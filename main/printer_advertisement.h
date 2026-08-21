@@ -32,6 +32,7 @@ typedef struct {
 /* Build the exact identity and TXT values published by printer_discovery.c. */
 void printer_advertisement_build(const printer_target_t *target,
                                  const char *bridge_uuid,
+                                 const char *custom_name,
                                  printer_advertisement_t *advertisement);
 
 size_t printer_advertisement_txt(const printer_advertisement_t *advertisement,

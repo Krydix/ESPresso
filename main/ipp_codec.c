@@ -25,6 +25,7 @@
 #define IPP_TAG_NAME 0x42
 #define IPP_TAG_KEYWORD 0x44
 #define IPP_TAG_URI 0x45
+#define IPP_TAG_URI_SCHEME 0x46
 #define IPP_TAG_CHARSET 0x47
 #define IPP_TAG_LANGUAGE 0x48
 #define IPP_TAG_MIMETYPE 0x49
@@ -99,6 +100,9 @@ typedef uint64_t present_attribute_t;
 #define PRESENT_PRINT_SCALING_DEFAULT (1ULL << 57)
 #define PRESENT_LANDSCAPE_PREFERRED (1ULL << 58)
 #define PRESENT_DOCUMENT_PASSWORD_SUPPORTED (1ULL << 59)
+#define PRESENT_REFERENCE_URI_SCHEMES (1ULL << 60)
+#define PRESENT_MEDIA_KEY_SUPPORTED (1ULL << 61)
+#define PRESENT_MEDIA_SIZE_SUPPORTED (1ULL << 62)
 
 static uint16_t read_u16(const uint8_t *data)
 {
@@ -414,9 +418,32 @@ static bool value_contains(const uint8_t *value, size_t value_length,
     return false;
 }
 
+static bool web_url_value(const uint8_t *value, size_t value_length)
+{
+    bool scheme = (value_length > 7 && memcmp(value, "http://", 7) == 0) ||
+                  (value_length > 8 && memcmp(value, "https://", 8) == 0);
+    if (!scheme) {
+        return false;
+    }
+    for (size_t i = 0; i < value_length; ++i) {
+        if (value[i] < 0x20 || value[i] == 0x7f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static char *rewrite_uri(const char *name, const uint8_t *value, size_t value_length,
                          const char *printer_uri, const char *authority)
 {
+    if (strcmp(name, "printer-more-info") == 0) {
+        static const char landing_page[] = "http://espresso.local/";
+        char *rewritten = malloc(sizeof(landing_page));
+        if (rewritten) {
+            memcpy(rewritten, landing_page, sizeof(landing_page));
+        }
+        return rewritten;
+    }
     if (strcmp(name, "printer-uri") == 0 ||
         strcmp(name, "printer-uri-supported") == 0 ||
         strcmp(name, "job-printer-uri") == 0) {
@@ -523,6 +550,9 @@ static uint64_t attribute_presence(const char *name)
         {"print-scaling-default", PRESENT_PRINT_SCALING_DEFAULT},
         {"landscape-orientation-requested-preferred", PRESENT_LANDSCAPE_PREFERRED},
         {"document-password-supported", PRESENT_DOCUMENT_PASSWORD_SUPPORTED},
+        {"reference-uri-schemes-supported", PRESENT_REFERENCE_URI_SCHEMES},
+        {"media-key-supported", PRESENT_MEDIA_KEY_SUPPORTED},
+        {"media-size-supported", PRESENT_MEDIA_SIZE_SUPPORTED},
     };
     for (size_t i = 0; i < sizeof(attributes) / sizeof(attributes[0]); ++i) {
         if (strcmp(name, attributes[i].name) == 0) {
@@ -713,6 +743,45 @@ static bool append_media_database(byte_buffer_t *buffer, const char *media_csv)
     return true;
 }
 
+static bool append_media_sizes(byte_buffer_t *buffer, const char *media_csv)
+{
+    bool first = true;
+    const char *cursor = media_csv;
+    while (cursor && *cursor) {
+        while (*cursor == ',' || isspace((unsigned char)*cursor)) {
+            ++cursor;
+        }
+        const char *start = cursor;
+        while (*cursor && *cursor != ',') {
+            ++cursor;
+        }
+        const char *end = cursor;
+        while (end > start && isspace((unsigned char)end[-1])) {
+            --end;
+        }
+        uint32_t width = 0;
+        uint32_t height = 0;
+        if (end > start && media_dimensions(start, (size_t)(end - start),
+                                            &width, &height)) {
+            if (!append_attribute(buffer, IPP_TAG_BEGIN_COLLECTION,
+                                  first ? "media-size-supported" : NULL,
+                                  NULL, 0) ||
+                !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL,
+                               "x-dimension") ||
+                !append_i32(buffer, IPP_TAG_INTEGER, NULL, width) ||
+                !append_string(buffer, IPP_TAG_MEMBER_NAME, NULL,
+                               "y-dimension") ||
+                !append_i32(buffer, IPP_TAG_INTEGER, NULL, height) ||
+                !append_attribute(buffer, IPP_TAG_END_COLLECTION, NULL,
+                                  NULL, 0)) {
+                return false;
+            }
+            first = false;
+        }
+    }
+    return true;
+}
+
 static bool append_resolution(byte_buffer_t *buffer, const char *name,
                               uint16_t dpi)
 {
@@ -762,6 +831,11 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
     }
     if (!(present & PRESENT_URI_SECURITY) &&
         !append_string(buffer, IPP_TAG_KEYWORD, "uri-security-supported", "none")) {
+        return false;
+    }
+    if (!(present & PRESENT_REFERENCE_URI_SCHEMES) &&
+        !append_string(buffer, IPP_TAG_URI_SCHEME,
+                       "reference-uri-schemes-supported", "ftp")) {
         return false;
     }
     if (!(present & PRESENT_UUID) && local_uuid && *local_uuid) {
@@ -823,15 +897,8 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
         return false;
     }
     if (!(present & PRESENT_MORE_INFO)) {
-        const char *uri_suffix = strstr(printer_uri, "://");
-        char more_info[ESPRESSO_ADDRESS_MAX + 40];
-        if (uri_suffix) {
-            snprintf(more_info, sizeof(more_info), "http://%.*s/",
-                     (int)strcspn(uri_suffix + 3, "/"), uri_suffix + 3);
-        } else {
-            snprintf(more_info, sizeof(more_info), "http://espresso.local/");
-        }
-        if (!append_string(buffer, IPP_TAG_URI, "printer-more-info", more_info)) {
+        if (!append_string(buffer, IPP_TAG_URI, "printer-more-info",
+                           "http://espresso.local/")) {
             return false;
         }
     }
@@ -912,6 +979,15 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
     }
     if (!(present & PRESENT_MEDIA) && target->media[0] &&
         !append_csv_attributes(buffer, IPP_TAG_KEYWORD, "media-supported", target->media)) {
+        return false;
+    }
+    if (!(present & PRESENT_MEDIA_KEY_SUPPORTED) && target->media[0] &&
+        !append_csv_attributes(buffer, IPP_TAG_KEYWORD,
+                               "media-key-supported", target->media)) {
+        return false;
+    }
+    if (!(present & PRESENT_MEDIA_SIZE_SUPPORTED) && target->media[0] &&
+        !append_media_sizes(buffer, target->media)) {
         return false;
     }
     if (!(present & PRESENT_MEDIA_DEFAULT) && target->media_default[0] &&
@@ -1219,6 +1295,7 @@ static ipp_codec_result_t transform_message(
             (strcmp(current_name, "printer-uri") == 0 ||
              strcmp(current_name, "printer-uri-supported") == 0 ||
              strcmp(current_name, "job-printer-uri") == 0 ||
+             strcmp(current_name, "printer-more-info") == 0 ||
              strcmp(current_name, "job-uri") == 0)) {
             allocated_value = rewrite_uri(current_name, value, value_length,
                                           printer_uri, uri_authority);
@@ -1666,10 +1743,71 @@ ipp_codec_result_t ipp_codec_inspect_request(
             csv_add_split(info->requested_attributes,
                           sizeof(info->requested_attributes), input + cursor,
                           value_length);
+        } else if (strcmp(current_name, "job-name") == 0 &&
+                   (tag == IPP_TAG_NAME || tag == IPP_TAG_TEXT)) {
+            copy_value(info->job_name, sizeof(info->job_name), input + cursor,
+                       value_length);
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   strcmp(current_name, "job-id") == 0 &&
+                   tag == IPP_TAG_INTEGER && value_length == 4) {
+            info->has_job_id = true;
+            info->job_id = read_u32(input + cursor);
+        } else if (current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+                   strcmp(current_name, "last-document") == 0 &&
+                   tag == IPP_TAG_BOOLEAN && value_length == 1) {
+            info->has_last_document = true;
+            info->last_document = input[cursor] != 0;
         }
         cursor += value_length;
     }
     return IPP_CODEC_INCOMPLETE;
+}
+
+bool ipp_codec_get_u32_attribute(const uint8_t *input, size_t input_length,
+                                 const char *attribute_name, uint32_t *value)
+{
+    if (!input || !attribute_name || !value || input_length < IPP_HEADER_LENGTH) {
+        return false;
+    }
+    size_t cursor = IPP_HEADER_LENGTH;
+    char current_name[IPP_NAME_MAX + 1] = {0};
+    while (cursor < input_length) {
+        uint8_t tag = input[cursor++];
+        if (tag == IPP_TAG_END_ATTRIBUTES) {
+            return false;
+        }
+        if (tag <= 0x0f) {
+            current_name[0] = '\0';
+            continue;
+        }
+        if (cursor + 2 > input_length) {
+            return false;
+        }
+        uint16_t name_length = read_u16(input + cursor);
+        cursor += 2;
+        if (name_length > IPP_NAME_MAX || cursor + name_length + 2 > input_length) {
+            return false;
+        }
+        if (name_length) {
+            memcpy(current_name, input + cursor, name_length);
+            current_name[name_length] = '\0';
+        } else if (!current_name[0]) {
+            return false;
+        }
+        cursor += name_length;
+        uint16_t value_length = read_u16(input + cursor);
+        cursor += 2;
+        if (cursor + value_length > input_length) {
+            return false;
+        }
+        if ((tag == IPP_TAG_INTEGER || tag == IPP_TAG_ENUM) &&
+            value_length == 4 && strcmp(current_name, attribute_name) == 0) {
+            *value = read_u32(input + cursor);
+            return true;
+        }
+        cursor += value_length;
+    }
+    return false;
 }
 
 ipp_codec_result_t ipp_codec_filter_response(
@@ -2000,6 +2138,12 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
             copy_value(target->label, sizeof(target->label), value, value_length);
         } else if (strcmp(current_name, "printer-location") == 0) {
             copy_value(target->location, sizeof(target->location), value, value_length);
+        } else if (strcmp(current_name, "printer-more-info") == 0 &&
+                   tag == IPP_TAG_URI &&
+                   value_length < sizeof(target->admin_url) &&
+                   web_url_value(value, value_length)) {
+            copy_value(target->admin_url, sizeof(target->admin_url),
+                       value, value_length);
         } else if (strcmp(current_name, "printer-uuid") == 0) {
             if (value_length > 9 && memcmp(value, "urn:uuid:", 9) == 0) {
                 value += 9;

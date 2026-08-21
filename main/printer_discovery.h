@@ -14,4 +14,5 @@ bool printer_discovery_get(size_t index, printer_target_t *target);
 esp_err_t printer_discovery_select(size_t index);
 esp_err_t printer_discovery_clear_selection(void);
 esp_err_t printer_discovery_advertise_selected(void);
+void printer_discovery_advertised_name(char *name, size_t name_size);
 void printer_discovery_network_ready(void);

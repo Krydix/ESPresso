@@ -10,6 +10,7 @@ idf_component_register(
         "ipp_proxy.c"
         "ipp_proxy_core.c"
         "ipp_stream.c"
+        "job_history.c"
         "ota_update.c"
         "printer_capabilities.c"
         "printer_advertisement.c"
@@ -26,6 +27,7 @@ idf_component_register(
         esp_http_server
         esp_https_ota
         esp_netif
+        esp_timer
         esp_wifi
         esp_driver_uart
         json

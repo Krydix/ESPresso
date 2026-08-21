@@ -76,6 +76,21 @@ static bool text_is_true(const char *value)
                      strcmp(value, "1") == 0);
 }
 
+static bool safe_web_url(const char *value)
+{
+    if (!value || (strncmp(value, "http://", 7) != 0 &&
+                   strncmp(value, "https://", 8) != 0)) {
+        return false;
+    }
+    for (const unsigned char *cursor = (const unsigned char *)value;
+         *cursor; ++cursor) {
+        if (*cursor < 0x20 || *cursor == 0x7f) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void refresh_saved_address(void)
 {
     printer_target_t target;
@@ -167,6 +182,11 @@ static void target_from_result(const mdns_result_t *result, printer_target_t *ta
     txt_get(result, "Collate", flag, sizeof(flag));
     target->collate = text_is_true(flag);
     txt_get(result, "note", target->location, sizeof(target->location));
+    char admin_url[ESPRESSO_ADMIN_URL_MAX];
+    if (txt_get(result, "adminurl", admin_url, sizeof(admin_url)) &&
+        safe_web_url(admin_url)) {
+        snprintf(target->admin_url, sizeof(target->admin_url), "%s", admin_url);
+    }
     txt_get(result, "printer-state", flag, sizeof(flag));
     unsigned long state = strtoul(flag, NULL, 10);
     if (state >= 3 && state <= 5) {
@@ -249,11 +269,38 @@ esp_err_t printer_discovery_scan(void)
     }
     mdns_query_results_free(results);
 
+    /* A scan also refreshes the persisted profile for the selected endpoint.
+     * This keeps the selection stable while picking up newly advertised
+     * metadata such as adminurl, location, and changing capabilities. */
+    bool selected_changed = false;
+    printer_target_t selected;
+    if (app_state_get_target(&selected)) {
+        for (size_t i = 0; i < count; ++i) {
+            if (strcmp(found[i].address, selected.address) == 0 &&
+                found[i].port == selected.port &&
+                strcmp(found[i].resource_path, selected.resource_path) == 0) {
+                if (memcmp(&found[i], &selected, sizeof(selected)) != 0) {
+                    esp_err_t save_err = app_state_set_target(&found[i]);
+                    if (save_err == ESP_OK) {
+                        selected_changed = true;
+                    } else {
+                        ESP_LOGW(TAG, "could not refresh selected profile: %s",
+                                 esp_err_to_name(save_err));
+                    }
+                }
+                break;
+            }
+        }
+    }
+
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memcpy(s_printers, found, sizeof(s_printers));
     s_printer_count = count;
     xSemaphoreGive(s_lock);
     free(found);
+    if (selected_changed) {
+        ESP_ERROR_CHECK_WITHOUT_ABORT(printer_discovery_advertise_selected());
+    }
     ESP_LOGI(TAG, "found %u IPP printer(s)", (unsigned)count);
     return ESP_OK;
 }
@@ -318,8 +365,11 @@ static esp_err_t advertise_selected_locked(void)
     printer_identity_target_uuid(&s_advertisement_target,
                                  s_advertisement_uuid,
                                  sizeof(s_advertisement_uuid));
+    char custom_name[ESPRESSO_PRINTER_NAME_MAX];
+    app_state_get_printer_name(custom_name, sizeof(custom_name));
     printer_advertisement_build(&s_advertisement_target,
                                 s_advertisement_uuid,
+                                custom_name,
                                 &s_pending_advertisement);
     size_t txt_count = printer_advertisement_txt(
         &s_pending_advertisement, s_generic_txt, ESPRESSO_DNSSD_TXT_MAX);
@@ -388,6 +438,20 @@ esp_err_t printer_discovery_advertise_selected(void)
     esp_err_t err = advertise_selected_locked();
     xSemaphoreGive(s_lock);
     return err;
+}
+
+void printer_discovery_advertised_name(char *name, size_t name_size)
+{
+    if (!name || name_size == 0) {
+        return;
+    }
+    name[0] = '\0';
+    if (!s_lock) {
+        return;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    snprintf(name, name_size, "%s", s_service_instance);
+    xSemaphoreGive(s_lock);
 }
 
 void printer_discovery_network_ready(void)

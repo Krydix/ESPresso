@@ -9,6 +9,8 @@
 #include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "ipp_proxy.h"
 #include "ota_update.h"
 #include "printer_discovery.h"
 #include "wifi_manager.h"
@@ -100,7 +102,16 @@ static esp_err_t status_handler(httpd_req_t *request)
     cJSON *printer = cJSON_AddObjectToObject(root, "printer");
     cJSON_AddBoolToObject(printer, "selected", selected);
     if (selected) {
+        char custom_name[ESPRESSO_PRINTER_NAME_MAX];
+        char advertised_name[ESPRESSO_PRINTER_NAME_MAX];
+        app_state_get_printer_name(custom_name, sizeof(custom_name));
+        printer_discovery_advertised_name(advertised_name,
+                                          sizeof(advertised_name));
         cJSON_AddStringToObject(printer, "name", target.label);
+        cJSON_AddStringToObject(printer, "customName", custom_name);
+        cJSON_AddStringToObject(printer, "advertisedName",
+                                advertised_name[0] ? advertised_name :
+                                                     custom_name);
         cJSON_AddStringToObject(printer, "address", target.address);
         cJSON_AddStringToObject(printer, "path", target.resource_path);
         cJSON_AddStringToObject(printer, "pdl", target.pdl);
@@ -110,6 +121,7 @@ static esp_err_t status_handler(httpd_req_t *request)
         cJSON_AddBoolToObject(printer, "capabilityQueried", target.capability_queried);
         cJSON_AddNumberToObject(printer, "state", target.printer_state);
         cJSON_AddStringToObject(printer, "stateReasons", target.state_reasons);
+        cJSON_AddStringToObject(printer, "adminUrl", target.admin_url);
         cJSON_AddBoolToObject(printer, "acceptingJobs", target.accepting_jobs);
         cJSON_AddBoolToObject(printer, "acceptingJobsKnown",
                               target.accepting_jobs_known);
@@ -152,6 +164,38 @@ static esp_err_t wifi_scan_handler(httpd_req_t *request)
         cJSON_AddBoolToObject(item, "secure", entries[i].secure);
         cJSON_AddItemToArray(networks, item);
     }
+    return send_json(request, root);
+}
+
+static esp_err_t jobs_handler(httpd_req_t *request)
+{
+    espresso_job_record_t records[ESPRESSO_JOB_HISTORY_CAPACITY];
+    uint64_t now_ms = (uint64_t)esp_timer_get_time() / 1000ULL;
+    size_t count = ipp_proxy_job_snapshot(
+        records, ESPRESSO_JOB_HISTORY_CAPACITY, now_ms);
+    cJSON *root = cJSON_CreateObject();
+    cJSON *jobs = cJSON_AddArrayToObject(root, "jobs");
+    for (size_t i = 0; i < count; ++i) {
+        const espresso_job_record_t *record = &records[i];
+        cJSON *job = cJSON_CreateObject();
+        cJSON_AddNumberToObject(job, "id", record->id);
+        cJSON_AddStringToObject(job, "name", record->name);
+        cJSON_AddStringToObject(job, "format", record->format);
+        cJSON_AddStringToObject(job, "state",
+                                espresso_job_state_name(record->state));
+        cJSON_AddNumberToObject(job, "documentBytes", record->document_bytes);
+        cJSON_AddNumberToObject(
+            job, "ageSeconds",
+            now_ms >= record->started_ms ?
+                (double)(now_ms - record->started_ms) / 1000.0 : 0);
+        cJSON_AddNumberToObject(
+            job, "durationMs",
+            record->updated_ms >= record->started_ms ?
+                (double)(record->updated_ms - record->started_ms) : 0);
+        cJSON_AddItemToArray(jobs, job);
+    }
+    cJSON_AddNumberToObject(root, "retentionSeconds",
+                            ESPRESSO_JOB_HISTORY_TTL_MS / 1000ULL);
     return send_json(request, root);
 }
 
@@ -224,6 +268,7 @@ static esp_err_t printers_handler(httpd_req_t *request)
         cJSON_AddBoolToObject(item, "capabilityQueried", target.capability_queried);
         cJSON_AddStringToObject(item, "ippVersions", target.ipp_versions);
         cJSON_AddStringToObject(item, "media", target.media);
+        cJSON_AddStringToObject(item, "adminUrl", target.admin_url);
         cJSON_AddNumberToObject(item, "state", target.printer_state);
         cJSON_AddBoolToObject(item, "acceptingJobs", target.accepting_jobs);
         cJSON_AddBoolToObject(item, "acceptingJobsKnown",
@@ -266,6 +311,48 @@ static esp_err_t printer_clear_handler(httpd_req_t *request)
                                    "Could not clear printer");
     }
     return httpd_resp_sendstr(request, "{\"selected\":false}");
+}
+
+static esp_err_t printer_name_handler(httpd_req_t *request)
+{
+    if (!app_state_get_target(NULL)) {
+        return send_conflict(request, "Select a printer before naming it");
+    }
+    char *body = read_body(request, 512);
+    if (!body) {
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "Invalid body");
+    }
+    cJSON *json = cJSON_Parse(body);
+    free(body);
+    cJSON *name = json ? cJSON_GetObjectItemCaseSensitive(json, "name") : NULL;
+    if (!cJSON_IsString(name)) {
+        cJSON_Delete(json);
+        return httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST,
+                                   "name must be a string");
+    }
+    esp_err_t err = app_state_set_printer_name(name->valuestring);
+    cJSON_Delete(json);
+    if (err == ESP_ERR_INVALID_ARG || err == ESP_ERR_INVALID_SIZE) {
+        return httpd_resp_send_err(
+            request, HTTPD_400_BAD_REQUEST,
+            "name must be at most 63 UTF-8 bytes without control characters");
+    }
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not save printer name");
+    }
+    err = printer_discovery_advertise_selected();
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Name saved but mDNS refresh failed");
+    }
+    char advertised_name[ESPRESSO_PRINTER_NAME_MAX];
+    printer_discovery_advertised_name(advertised_name,
+                                      sizeof(advertised_name));
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "advertisedName", advertised_name);
+    return send_json(request, response);
 }
 
 static esp_err_t update_upload_handler(httpd_req_t *request)
@@ -364,7 +451,7 @@ esp_err_t web_server_start(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 6;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 14;
     config.lru_purge_enable = true;
     config.stack_size = 8192;
     config.recv_wait_timeout = 30;
@@ -375,12 +462,14 @@ esp_err_t web_server_start(void)
         {.uri = "/", .method = HTTP_GET, .handler = root_handler},
         {.uri = "/favicon.svg", .method = HTTP_GET, .handler = favicon_handler},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
+        {.uri = "/api/jobs", .method = HTTP_GET, .handler = jobs_handler},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler},
         {.uri = "/api/wifi/connect", .method = HTTP_POST, .handler = wifi_connect_handler},
         {.uri = "/api/wifi", .method = HTTP_DELETE, .handler = wifi_forget_handler},
         {.uri = "/api/printers", .method = HTTP_GET, .handler = printers_handler},
         {.uri = "/api/printer", .method = HTTP_POST, .handler = printer_select_handler},
         {.uri = "/api/printer", .method = HTTP_DELETE, .handler = printer_clear_handler},
+        {.uri = "/api/printer/name", .method = HTTP_POST, .handler = printer_name_handler},
         {.uri = "/api/update/upload", .method = HTTP_POST, .handler = update_upload_handler},
         {.uri = "/api/update/github", .method = HTTP_POST, .handler = update_github_handler},
     };

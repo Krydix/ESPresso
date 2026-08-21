@@ -57,6 +57,8 @@ def main() -> int:
     root = args.root.resolve()
     compat = load_compat_lab(root)
     fixture = json.loads(args.fixture.resolve().read_text())
+    admin_url = f"http://{args.advertise_ip}:{args.port}/"
+    fixture.setdefault("ipp", {})["moreInfo"] = admin_url
     codec = compat.Codec(args.library.resolve(), fixture)
     state = compat.LabState(codec, fixture)
     args.capture_dir.mkdir(parents=True, exist_ok=True)
@@ -94,9 +96,23 @@ def main() -> int:
         return response
 
     state.legacy_response = logged_response
-    server = compat.ThreadingHTTPServer(
-        ("0.0.0.0", args.port), compat.make_legacy_handler(state)
-    )
+    legacy_handler = compat.make_legacy_handler(state)
+
+    def printer_home(handler):
+        body = (
+            "<!doctype html><meta name=viewport content='width=device-width'>"
+            "<title>Legacy AirPrint Test Printer</title>"
+            "<h1>Legacy AirPrint Test Printer</h1>"
+            "<p>This is the physical-printer website advertised to ESPresso.</p>"
+        ).encode()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    legacy_handler.do_GET = printer_home
+    server = compat.ThreadingHTTPServer(("0.0.0.0", args.port), legacy_handler)
     server.timeout = 0.5
 
     txt = [
@@ -105,7 +121,8 @@ def main() -> int:
         "rp=ipp/print",
         f"ty={fixture['name']}",
         "product=(Legacy AirPrint test fixture)",
-        "note=ESPresso hardware integration test",
+        "note=Legacy AirPrint test printer",
+        f"adminurl={admin_url}",
         "pdl=image/urf,application/pdf",
         "URF=W8,SRGB24,CP1,IS1-4-5-19,MT1-2-3-4-5-6,RS300-600,V1.4,DM1",
         "Color=T",

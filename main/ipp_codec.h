@@ -61,9 +61,14 @@ typedef struct {
     bool has_attributes_charset;
     bool has_natural_language;
     bool has_target_uri;
+    bool has_job_id;
+    bool has_last_document;
+    bool last_document;
+    uint32_t job_id;
     bool operation_attributes_valid;
     char attributes_charset[32];
     char document_format[64];
+    char job_name[64];
     char requested_attributes[IPP_REQUESTED_ATTRIBUTES_MAX];
 } ipp_request_info_t;
 
@@ -136,6 +141,10 @@ ipp_codec_result_t ipp_codec_inspect_request(
     const uint8_t *input,
     size_t input_length,
     ipp_request_info_t *info);
+
+/* Read the first integer/enum attribute with this name from an IPP envelope. */
+bool ipp_codec_get_u32_attribute(const uint8_t *input, size_t input_length,
+                                 const char *attribute_name, uint32_t *value);
 
 /* Build a standards-shaped IPP error/success response with a status message. */
 ipp_codec_result_t ipp_codec_build_status_response(

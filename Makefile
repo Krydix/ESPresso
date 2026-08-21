@@ -96,6 +96,12 @@ test:
 	@"$(BUILD_DIR)/host-tests/test_ipp_proxy_core"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/job_history.c" \
+		"$(ROOT_DIR)/tests/test_job_history.c" \
+		-o "$(BUILD_DIR)/host-tests/test_job_history"
+	@"$(BUILD_DIR)/host-tests/test_job_history"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-I"$(ROOT_DIR)/main" \
 		"$(ROOT_DIR)/main/printer_advertisement.c" \
 		"$(ROOT_DIR)/tests/test_printer_advertisement.c" \
 		-o "$(BUILD_DIR)/host-tests/test_printer_advertisement"
@@ -168,6 +174,13 @@ test-sanitize:
 		"$(ROOT_DIR)/tests/test_ipp_proxy_core.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_proxy_core_sanitize"
 	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_ipp_proxy_core_sanitize"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/job_history.c" \
+		"$(ROOT_DIR)/tests/test_job_history.c" \
+		-o "$(BUILD_DIR)/host-tests/test_job_history_sanitize"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_job_history_sanitize"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-fsanitize=address,undefined -fno-omit-frame-pointer \
 		-I"$(ROOT_DIR)/main" \

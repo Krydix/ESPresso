@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ESPRESSO_PROFILE_SCHEMA 4
+#define ESPRESSO_PROFILE_SCHEMA 5
 #define ESPRESSO_INSTANCE_MAX 64
 #define ESPRESSO_HOST_MAX 64
 #define ESPRESSO_ADDRESS_MAX 48
@@ -18,6 +18,7 @@
 #define ESPRESSO_IPP_VERSIONS_MAX 32
 #define ESPRESSO_COLOR_MODE_MAX 16
 #define ESPRESSO_STATE_REASONS_MAX 192
+#define ESPRESSO_ADMIN_URL_MAX 256
 
 #define ESPRESSO_JOB_CAP_COPIES (1U << 0)
 #define ESPRESSO_JOB_CAP_FINISHINGS (1U << 1)
@@ -65,4 +66,5 @@ typedef struct {
     bool copies;
     bool collate;
     bool legacy_output_mode;
+    char admin_url[ESPRESSO_ADMIN_URL_MAX];
 } printer_target_t;

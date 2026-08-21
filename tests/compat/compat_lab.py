@@ -38,9 +38,14 @@ class RequestInfo(ctypes.Structure):
         ("has_attributes_charset", ctypes.c_bool),
         ("has_natural_language", ctypes.c_bool),
         ("has_target_uri", ctypes.c_bool),
+        ("has_job_id", ctypes.c_bool),
+        ("has_last_document", ctypes.c_bool),
+        ("last_document", ctypes.c_bool),
+        ("job_id", ctypes.c_uint32),
         ("operation_attributes_valid", ctypes.c_bool),
         ("attributes_charset", ctypes.c_char * 32),
         ("document_format", ctypes.c_char * 64),
+        ("job_name", ctypes.c_char * 64),
         ("requested_attributes", ctypes.c_char * 1536),
     ]
 
@@ -429,6 +434,8 @@ class LabState:
             attrs.append(ipp_attr(0x41, "printer-make-and-model", self.fixture["name"]))
             if spec.get("location"):
                 attrs.append(ipp_attr(0x41, "printer-location", spec["location"]))
+            if spec.get("moreInfo"):
+                attrs.append(ipp_attr(0x45, "printer-more-info", spec["moreInfo"]))
             return ipp_response(legacy_version, 0, info.request_id,
                                 operation_attributes(), [(0x04, attrs)])
 
@@ -702,10 +709,10 @@ def run_ipptool(root: Path, uri: str, test_file: Path, plist_path: Path | None =
     command = ["ipptool", "-C" if chunked else "-L"]
     if plist_path:
         command += ["-P", str(plist_path)]
-    elif test_file.name.startswith("ipp-") or test_file.name == "rfc-core.test":
-        command.append("-t")
     else:
-        command.append("-q")
+        # Keep named test output in CI so an assertion failure identifies the
+        # exact IPP exchange instead of surfacing only ipptool's exit code.
+        command.append("-t")
     if version:
         command += ["-V", version]
     if filename:

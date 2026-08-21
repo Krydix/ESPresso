@@ -14,6 +14,7 @@
 #include "app_state.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -21,6 +22,7 @@
 #include "ipp_http_request.h"
 #include "ipp_proxy_core.h"
 #include "ipp_stream.h"
+#include "job_history.h"
 #include "lwip/inet.h"
 #include "printer_discovery.h"
 #include "printer_identity.h"
@@ -37,12 +39,108 @@
 
 static const char *TAG = "espresso_proxy";
 static SemaphoreHandle_t worker_slots;
+static SemaphoreHandle_t job_history_lock;
+static espresso_job_history_t job_history;
 
 typedef struct {
     int socket_fd;
     ipp_http_request_t *request;
     char peer[64];
 } ipp_connection_t;
+
+static uint64_t monotonic_ms(void)
+{
+    return (uint64_t)esp_timer_get_time() / 1000ULL;
+}
+
+static uint32_t monitor_request_start(const ipp_request_info_t *info)
+{
+    if (!job_history_lock) {
+        return 0;
+    }
+    xSemaphoreTake(job_history_lock, portMAX_DELAY);
+    uint32_t id = 0;
+    if (info->operation_id == IPP_OPERATION_PRINT_JOB) {
+        id = espresso_job_history_begin(&job_history, info->job_name,
+                                        info->document_format,
+                                        ESPRESSO_JOB_SENDING, monotonic_ms());
+    } else if (info->operation_id == IPP_OPERATION_CREATE_JOB) {
+        id = espresso_job_history_begin(&job_history, info->job_name,
+                                        info->document_format,
+                                        ESPRESSO_JOB_QUEUED, monotonic_ms());
+    } else if (info->operation_id == IPP_OPERATION_SEND_DOCUMENT) {
+        if (info->has_job_id) {
+            id = espresso_job_history_find_upstream(&job_history, info->job_id);
+        }
+        if (!id) {
+            id = espresso_job_history_begin(&job_history, info->job_name,
+                                            info->document_format,
+                                            ESPRESSO_JOB_SENDING, monotonic_ms());
+            if (info->has_job_id) {
+                espresso_job_history_attach_upstream(&job_history, id,
+                                                      info->job_id,
+                                                      monotonic_ms());
+            }
+        } else {
+            espresso_job_history_update(&job_history, id, ESPRESSO_JOB_SENDING,
+                                        info->document_format, 0,
+                                        monotonic_ms());
+        }
+    } else if (info->operation_id == IPP_OPERATION_CANCEL_JOB &&
+               info->has_job_id) {
+        id = espresso_job_history_find_upstream(&job_history, info->job_id);
+    }
+    xSemaphoreGive(job_history_lock);
+    return id;
+}
+
+static void monitor_update(uint32_t id, espresso_job_state_t state,
+                           const char *format, size_t document_bytes)
+{
+    if (!id || !job_history_lock) {
+        return;
+    }
+    xSemaphoreTake(job_history_lock, portMAX_DELAY);
+    espresso_job_history_update(&job_history, id, state, format,
+                                document_bytes, monotonic_ms());
+    xSemaphoreGive(job_history_lock);
+}
+
+static void monitor_submission_failed(uint32_t id,
+                                      const ipp_request_info_t *info,
+                                      size_t document_bytes)
+{
+    if (info->operation_id == IPP_OPERATION_PRINT_JOB ||
+        info->operation_id == IPP_OPERATION_CREATE_JOB ||
+        info->operation_id == IPP_OPERATION_SEND_DOCUMENT) {
+        monitor_update(id, ESPRESSO_JOB_FAILED, info->document_format,
+                       document_bytes);
+    }
+}
+
+static void monitor_attach_upstream(uint32_t id, uint32_t upstream_job_id)
+{
+    if (!id || !job_history_lock) {
+        return;
+    }
+    xSemaphoreTake(job_history_lock, portMAX_DELAY);
+    espresso_job_history_attach_upstream(&job_history, id, upstream_job_id,
+                                          monotonic_ms());
+    xSemaphoreGive(job_history_lock);
+}
+
+size_t ipp_proxy_job_snapshot(espresso_job_record_t *records, size_t capacity,
+                              uint64_t now_ms)
+{
+    if (!records || !capacity || !job_history_lock) {
+        return 0;
+    }
+    xSemaphoreTake(job_history_lock, portMAX_DELAY);
+    size_t count = espresso_job_history_snapshot(&job_history, records,
+                                                 capacity, now_ms);
+    xSemaphoreGive(job_history_lock);
+    return count;
+}
 
 static const char *operation_name(uint16_t operation_id)
 {
@@ -481,6 +579,8 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
                      request_info.requested_attributes : "all");
     }
 
+    uint32_t monitor_id = monitor_request_start(&request_info);
+
     ipp_proxy_plan_t plan;
     ipp_proxy_plan_request(&request_info, &target,
                            request_body_length, &plan);
@@ -492,6 +592,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         request_info.major = plan.response_major;
         request_info.minor = plan.response_minor;
         free(prefix);
+        monitor_submission_failed(monitor_id, &request_info, 0);
         return send_ipp_status(connection, &request_info, plan.status_code,
                                plan.status_message);
     }
@@ -525,6 +626,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
                      operation_name(request_info.operation_id), codec_result,
                      rejected_attribute[0] ? rejected_attribute : "unknown");
             free(prefix);
+            monitor_submission_failed(monitor_id, &request_info, 0);
             return send_ipp_status(connection, &request_info,
                                    codec_result == IPP_CODEC_UNSUPPORTED ?
                                        IPP_STATUS_CLIENT_ERROR_ATTRIBUTES_OR_VALUES :
@@ -588,6 +690,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     if (!client) {
         free(rewritten_prefix);
         free(prefix);
+        monitor_submission_failed(monitor_id, &request_info, 0);
         send_http_error(connection, "500 Internal Server Error",
                         "Unable to allocate printer connection");
         return ESP_ERR_NO_MEM;
@@ -624,6 +727,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         ESP_LOGE(TAG, "forwarding request to %s failed: %s", upstream_url,
                  esp_err_to_name(err));
         esp_http_client_cleanup(client);
+        monitor_submission_failed(monitor_id, &request_info, 0);
         send_gateway_fault(connection,
                            err == ESP_ERR_TIMEOUT ?
                                IPP_PROXY_FAULT_UPSTREAM_TIMEOUT :
@@ -638,6 +742,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         status < 200 || status >= 300) {
         ESP_LOGE(TAG, "legacy printer returned HTTP %d", status);
         esp_http_client_cleanup(client);
+        monitor_submission_failed(monitor_id, &request_info, 0);
         send_http_error(connection, "502 Bad Gateway",
                         "Legacy printer returned an HTTP error");
         return ESP_FAIL;
@@ -653,6 +758,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
                  connection->peer, operation_name(operation_id),
                  esp_err_to_name(err), response_length);
         free(response_body);
+        monitor_submission_failed(monitor_id, &request_info, 0);
         ipp_proxy_fault_t fault = IPP_PROXY_FAULT_INVALID_RESPONSE;
         if (err == ESP_ERR_TIMEOUT) {
             fault = IPP_PROXY_FAULT_UPSTREAM_TIMEOUT;
@@ -673,6 +779,30 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
              "client %s %s upstream response: HTTP=%d IPP=0x%04x bytes=%zu",
              connection->peer, operation_name(operation_id), status,
              upstream_ipp_status, response_length);
+    size_t decoded_length =
+        ipp_http_request_decoded_length(connection->request);
+    size_t document_bytes = decoded_length >= request_info.attributes_length ?
+                                decoded_length - request_info.attributes_length : 0;
+    bool upstream_success = upstream_ipp_status < 0x0400;
+    if (!upstream_success) {
+        monitor_submission_failed(monitor_id, &request_info, document_bytes);
+    } else if (operation_id == IPP_OPERATION_PRINT_JOB) {
+        monitor_update(monitor_id, ESPRESSO_JOB_COMPLETED,
+                       request_info.document_format, document_bytes);
+    } else if (operation_id == IPP_OPERATION_CREATE_JOB) {
+        uint32_t upstream_job_id = 0;
+        if (ipp_codec_get_u32_attribute(response_body, response_length,
+                                        "job-id", &upstream_job_id)) {
+            monitor_attach_upstream(monitor_id, upstream_job_id);
+        }
+    } else if (operation_id == IPP_OPERATION_SEND_DOCUMENT) {
+        monitor_update(monitor_id,
+                       !request_info.has_last_document || request_info.last_document ?
+                           ESPRESSO_JOB_COMPLETED : ESPRESSO_JOB_QUEUED,
+                       request_info.document_format, document_bytes);
+    } else if (operation_id == IPP_OPERATION_CANCEL_JOB) {
+        monitor_update(monitor_id, ESPRESSO_JOB_CANCELLED, NULL, 0);
+    }
     const char *local_printer_uri = "ipp://espresso.local:631/ipp/print";
     const char *local_authority = "ipp://espresso.local:631";
     if (operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
@@ -730,6 +860,12 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         ESP_LOGE(TAG, "client %s %s response translation failed: codec=%d",
                  connection->peer, operation_name(operation_id), codec_result);
         free(client_response);
+        if (upstream_success && operation_id != IPP_OPERATION_PRINT_JOB &&
+            operation_id != IPP_OPERATION_SEND_DOCUMENT &&
+            operation_id != IPP_OPERATION_CANCEL_JOB) {
+            monitor_update(monitor_id, ESPRESSO_JOB_FAILED,
+                           request_info.document_format, document_bytes);
+        }
         send_http_error(connection, "502 Bad Gateway",
                         "Could not translate the printer response");
         return ESP_FAIL;
@@ -742,7 +878,7 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
              "client %s %s completed: result=%s response-bytes=%zu received-body=%zu",
              connection->peer, operation_name(operation_id),
              esp_err_to_name(err), client_response_length,
-             ipp_http_request_decoded_length(connection->request));
+             decoded_length);
     free(client_response);
     return err;
 }
@@ -828,6 +964,11 @@ static void ipp_accept_task(void *argument)
 
 esp_err_t ipp_proxy_start(void)
 {
+    espresso_job_history_init(&job_history);
+    job_history_lock = xSemaphoreCreateMutex();
+    if (!job_history_lock) {
+        return ESP_ERR_NO_MEM;
+    }
 #if CONFIG_LWIP_IPV6
     int listen_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_IP);
 #else
@@ -835,6 +976,8 @@ esp_err_t ipp_proxy_start(void)
 #endif
     if (listen_fd < 0) {
         ESP_LOGE(TAG, "IPP socket allocation failed: errno %d", errno);
+        vSemaphoreDelete(job_history_lock);
+        job_history_lock = NULL;
         return ESP_FAIL;
     }
     int reuse = 1;
@@ -857,12 +1000,16 @@ esp_err_t ipp_proxy_start(void)
         listen(listen_fd, IPP_SERVER_BACKLOG) != 0) {
         ESP_LOGE(TAG, "IPP server bind/listen failed: errno %d", errno);
         close(listen_fd);
+        vSemaphoreDelete(job_history_lock);
+        job_history_lock = NULL;
         return ESP_FAIL;
     }
     worker_slots = xSemaphoreCreateCounting(IPP_SERVER_WORKERS,
                                             IPP_SERVER_WORKERS);
     if (!worker_slots) {
         close(listen_fd);
+        vSemaphoreDelete(job_history_lock);
+        job_history_lock = NULL;
         return ESP_ERR_NO_MEM;
     }
     if (xTaskCreate(ipp_accept_task, "espresso_ipp", IPP_SERVER_TASK_STACK,
@@ -870,6 +1017,8 @@ esp_err_t ipp_proxy_start(void)
         vSemaphoreDelete(worker_slots);
         worker_slots = NULL;
         close(listen_fd);
+        vSemaphoreDelete(job_history_lock);
+        job_history_lock = NULL;
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG,

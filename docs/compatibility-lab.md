@@ -72,6 +72,13 @@ CI result green. Chunked client requests, format-conditioned media queries and R
 requested-attribute group selectors must pass. An unexpected pass or regression
 fails the runner so the matrix cannot silently become stale.
 
+`make test-compat` also replays the readiness query, full capability query and
+chunked `Print-Job` captured from iOS against every usable legacy-printer fixture.
+It requires the document to arrive byte-for-byte unchanged and requires
+`printer-more-info` to keep pointing to `http://espresso.local/`. Discovery and
+selection on an actual iPhone remain a hardware/LAN test because host CI cannot
+emulate Apple's multicast browser.
+
 `make test-conformance-report` runs CUPS `ipp-1.1.test`, `ipp-2.0.test`, and
 `ipp-everywhere.test` with continue-on-error reporting. IPP/1.1 and IPP/2.0 are
 required green gates. IPP Everywhere remains expected red because it requires formats

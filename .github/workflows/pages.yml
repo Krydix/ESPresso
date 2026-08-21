@@ -35,7 +35,7 @@ jobs:
       - name: Run host tests
         run: make test
 
-      - name: Validate IPP with CUPS
+      - name: Validate CUPS and captured iOS regressions
         run: |
           make test-cups
           make test-compat

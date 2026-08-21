@@ -182,14 +182,54 @@
       ]
     },
     {
-      "id": "cups-differential-queue",
-      "title": "cupsd/cups-browsed and ESPresso normalize captured legacy printers equivalently",
-      "status": "expected-fail",
+      "id": "cups-semantic-differential",
+      "title": "CUPS and ESPresso normalize captured legacy printer capabilities equivalently",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-cups-differential",
-      "acceptance": [
-        "Semantic attribute projections match for the supported relay subset",
-        "Differences are recorded as intentional compatibility policy"
+      "target": "make test-compat",
+      "evidence": [
+        "tests/compat/compat_lab.py",
+        "tests/compat/fixtures/basic-airprint.json",
+        "tests/compat/fixtures/ipp11-fallback.json",
+        "tests/compat/fixtures/old-output-mode.json",
+        "tests/compat/fixtures/dnssd-urf-recovery.json",
+        "tests/compat/fixtures/chunked-legacy-response.json",
+        "tests/compat/fixtures/malformed-truncated.json"
+      ]
+    },
+    {
+      "id": "captured-ios-job-flow",
+      "title": "Captured iOS capability probes and chunked Print-Job remain accepted end to end",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test-compat",
+      "evidence": [
+        "tests/compat/ios-airprint-flow.test",
+        "tests/compat/compat_lab.py",
+        "tests/minimal.urf"
+      ]
+    },
+    {
+      "id": "transient-job-monitoring",
+      "title": "Recent queued, active, completed, and failed relay jobs are monitored with bounded retention",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test && make test-sanitize",
+      "evidence": [
+        "main/job_history.c",
+        "tests/test_job_history.c"
+      ]
+    },
+    {
+      "id": "management-ui-stability",
+      "title": "Management page reloads preserve selection and expose naming, job monitoring, and the physical printer website",
+      "status": "supported",
+      "phase": 2,
+      "target": "make test",
+      "evidence": [
+        "frontend/index.html",
+        "main/web_server.c",
+        "tests/test_frontend_contract.py"
       ]
     },
     {
@@ -212,6 +252,17 @@
       "acceptance": [
         "CUPS-generated golden pages match after conversion",
         "Color spaces, resolution, duplex metadata, compression, and truncation are covered"
+      ]
+    },
+    {
+      "id": "full-ipp-everywhere-conformance",
+      "title": "All applicable IPP Everywhere conformance tests pass",
+      "status": "expected-fail",
+      "phase": 3,
+      "plannedTarget": "make test-conformance-report",
+      "acceptance": [
+        "The CUPS ipp-everywhere suite passes without advertising unsupported formats or operations",
+        "Required PWG Raster, printer metadata, and operation semantics are implemented and tested"
       ]
     },
     {

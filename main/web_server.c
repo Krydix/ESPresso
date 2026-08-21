@@ -113,6 +113,7 @@ static esp_err_t status_handler(httpd_req_t *request)
                                 advertised_name[0] ? advertised_name :
                                                      custom_name);
         cJSON_AddStringToObject(printer, "address", target.address);
+        cJSON_AddNumberToObject(printer, "port", target.port);
         cJSON_AddStringToObject(printer, "path", target.resource_path);
         cJSON_AddStringToObject(printer, "pdl", target.pdl);
         cJSON_AddStringToObject(printer, "urf", target.urf);

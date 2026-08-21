@@ -829,6 +829,19 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
                              output_path: Path):
     """Gate promoted suites and report the remaining expected failures."""
     fixture = json.loads(fixture_path.read_text())
+    matrix = json.loads((root / "tests/feature-matrix.json").read_text())
+    feature_status = {item["id"]: item["status"]
+                      for item in matrix["features"]}
+
+    def expected_outcome(feature_id: str) -> str:
+        status = feature_status.get(feature_id)
+        if status == "supported":
+            return "pass"
+        if status == "expected-fail":
+            return "fail"
+        raise AssertionError(
+            f"conformance feature {feature_id} must be supported or expected-fail")
+
     codec = Codec(library, fixture)
     state = LabState(codec, fixture)
     legacy = ThreadingHTTPServer(("127.0.0.1", 18632), make_legacy_handler(state))
@@ -841,14 +854,17 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
         cups_data = Path(subprocess.check_output(
             ["cups-config", "--datadir"], text=True).strip())
         suites = [
-            ("ipp-1.1", "1.1", cups_data / "ipptool/ipp-1.1.test", "pass"),
-            ("ipp-2.0", "2.0", cups_data / "ipptool/ipp-2.0.test", "pass"),
-            ("ipp-everywhere", "2.0", cups_data / "ipptool/ipp-everywhere.test",
-             "fail"),
+            ("ipp-1.1", "full-ipp11-conformance", "1.1",
+             cups_data / "ipptool/ipp-1.1.test"),
+            ("ipp-2.0", "full-ipp20-conformance", "2.0",
+             cups_data / "ipptool/ipp-2.0.test"),
+            ("ipp-everywhere", "full-ipp-everywhere-conformance", "2.0",
+             cups_data / "ipptool/ipp-everywhere.test"),
         ]
         results = []
         unexpected_outcome = False
-        for name, version, suite, expected in suites:
+        for name, feature_id, version, suite in suites:
+            expected = expected_outcome(feature_id)
             command = [
                 "ipptool", "-I", "-L", "-V", version,
                 "-f", str(root / "tests/minimal.urf"),
@@ -868,6 +884,7 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
                 unexpected_outcome |= unexpected
                 results.append({
                     "suite": name,
+                    "feature": feature_id,
                     "version": version,
                     "expected": expected,
                     "outcome": outcome,
@@ -880,6 +897,7 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
                 unexpected_outcome |= expected == "pass"
                 results.append({
                     "suite": name,
+                    "feature": feature_id,
                     "version": version,
                     "expected": expected,
                     "outcome": "expected-fail-timeout",
@@ -895,7 +913,7 @@ def write_conformance_report(root: Path, library: Path, fixture_path: Path,
             "cupsVersion": subprocess.check_output(
                 ["cups-config", "--version"], text=True).strip(),
             "fixture": fixture_path.name,
-            "contract": "IPP/1.1 is required green; broader suites remain expected red",
+            "contract": "suite expectations are derived from tests/feature-matrix.json",
             "suites": results,
         }
         output_path.parent.mkdir(parents=True, exist_ok=True)

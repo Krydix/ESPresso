@@ -51,6 +51,8 @@ static void test_builds_truthful_airprint_record(void)
     assert(strcmp(value_for(items, count, "printer-state"), "4") == 0);
     assert(strcmp(value_for(items, count, "UUID"), "bridge-test-uuid") == 0);
     assert(strcmp(value_for(items, count, "note"), "Studio") == 0);
+    assert(strcmp(value_for(items, count, "adminurl"),
+                  "http://espresso.local/") == 0);
 }
 
 static void test_bridge_identity_avoids_service_name_collisions(void)

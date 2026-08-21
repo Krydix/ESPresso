@@ -44,7 +44,7 @@
   EXPECT !printer-mandatory-job-attributes
   EXPECT printer-state-reasons OF-TYPE keyword
   EXPECT sides-supported OF-TYPE keyword
-  EXPECT printer-more-info OF-TYPE uri
+  EXPECT printer-more-info OF-TYPE uri WITH-VALUE "http://espresso.local/"
 }
 
 {

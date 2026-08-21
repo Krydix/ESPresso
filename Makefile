@@ -124,6 +124,7 @@ test:
 		"$(ROOT_DIR)/tests/test_ipp_fuzz_smoke.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke"
 	@"$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke"
+	@python3 "$(ROOT_DIR)/tests/test_frontend_contract.py"
 
 test-cups:
 	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }

@@ -1,0 +1,72 @@
+# Embedded CUPS subset
+
+ESPresso does not compile or run CUPS. It ports the parts of CUPS and the PWG sample
+server that describe how a driverless printer is discovered and represented, while
+using ESP-IDF for the actual network transport.
+
+## Included
+
+| Upstream behavior | ESPresso implementation |
+| --- | --- |
+| Browse and resolve an IPP DNS-SD service | ESP-IDF mDNS `_ipp._tcp` PTR query, SRV/TXT/address result |
+| Read `rp`, `pdl`, `URF`, `ty`, `UUID`, feature flags | Compact `printer_target_t` profile |
+| Query `all,media-col-database` with IPP 2.0 | Bounded HTTP/IPP discovery request |
+| Fall back to IPP 1.1 `all` for old firmware | Automatic second discovery request |
+| Re-resolve a saved DNS-SD hostname after reboot | ESP-IDF mDNS A query before advertisement |
+| Derive formats, URF, media, color, duplex, copies and operations | Allocation-bounded IPP parser |
+| Advertise `_ipp._tcp,_universal` using real capabilities | ESP-IDF mDNS service and TXT record |
+| Present a modern queue identity | ESP-specific UUID, URI and IPP 1.1/2.0 facade |
+| Relay printer and job operations | Version/URI envelope translation and pass-through HTTP |
+| Relay document data | Unchanged 4 KiB streaming path |
+
+The selected profile is persisted in NVS. Its schema is versioned so firmware updates
+discard incompatible cached records instead of interpreting an old C structure.
+
+## Synthesized metadata
+
+For successful `Get-Printer-Attributes` responses ESPresso can safely own and normalize:
+
+- `ipp-versions-supported`: `1.1`, `2.0`;
+- `printer-uri-supported` and printer/job URIs pointing at ESPresso;
+- `printer-uuid`, using the bridge identity rather than the physical printer UUID;
+- `uri-authentication-supported=none` and `uri-security-supported=none`, matching the
+  current local endpoint;
+- missing names and make/model text;
+- missing formats, URF modes, media names, color, sides, copies and operations only when
+  they were learned from the target profile;
+- basic `media-col-database`/`media-col-default` size collections derived from PWG
+  self-describing media names (plus a small set of CUPS-compatible legacy aliases);
+- modern color-mode metadata derived from older AirPrint color/URF attributes and
+  printer resolutions derived from URF `RS` values;
+- conservative `compression-supported=none` and
+  `multiple-document-jobs-supported=false` values.
+
+Live state, jobs, unrecognized media collections, margins, finishings and vendor
+attributes are forwarded from the old printer. ESPresso does not fabricate them.
+
+## Excluded
+
+These CUPS components are deliberately outside the embedded target:
+
+- rasterization or conversion between PDF, Apple Raster, PWG Raster, PCL or PostScript;
+- Ghostscript, MuPDF, Poppler, cups-filters and printer-specific filters;
+- PPD parsing/generation and legacy printer drivers;
+- the complete CUPS media-name/PPD database (self-describing PWG names need no table);
+- local spooling, accounting, subscriptions, job history or persistent document storage;
+- IPPS in the current firmware;
+- USB, parallel, proprietary backend and Printer Application support.
+
+The compatibility rule is simple: ESPresso may advertise and relay a document format
+only when the physical printer already reports that it accepts that exact format.
+
+## Upstream reference paths
+
+- OpenPrinting CUPS `backend/dnssd.c`: discovery types, resolution and deduplication
+- OpenPrinting CUPS `scheduler/ipp.c`: `Get-Printer-Attributes` 2.0 → 1.1 fallback
+- OpenPrinting CUPS `scheduler/dirsvc.c`: DNS-SD TXT generation
+- OpenPrinting CUPS `cups/ppd-cache.c`: URF and capability interpretation
+- OpenPrinting cups-browsed `daemon/cups-browsed.c`: alternate capability forms
+- PWG ippsample `server/printer.c`: modern IPP server DNS-SD advertisement
+
+All upstream references are Apache-2.0-compatible. ESPresso's implementation is a
+small, independently structured embedded adaptation rather than copied libcups code.

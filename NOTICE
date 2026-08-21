@@ -1,0 +1,10 @@
+ESPresso
+
+The captive-portal DNS responder in main/dns_server.c is derived from the
+ESP-IDF captive_portal example, offered by Espressif Systems under Unlicense
+or CC0-1.0.
+
+The embedded discovery, IPP capability fallback, and DNS-SD advertisement behavior
+is informed by OpenPrinting CUPS and the Printer Working Group ippsample project,
+both provided under the Apache License 2.0. ESPresso uses ESP-IDF transports and an
+independently structured, bounded implementation rather than linking libcups.

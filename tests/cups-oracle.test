@@ -1,0 +1,20 @@
+{
+  NAME "CUPS accepts ESPresso normalized printer attributes"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR language attributes-natural-language en
+  ATTR uri printer-uri $uri
+
+  STATUS successful-ok
+  EXPECT ipp-versions-supported OF-TYPE keyword IN-GROUP printer-attributes-tag
+  EXPECT printer-uri-supported OF-TYPE uri IN-GROUP printer-attributes-tag
+  EXPECT printer-uuid OF-TYPE uri IN-GROUP printer-attributes-tag
+  EXPECT uri-security-supported WITH-VALUE none
+  EXPECT document-format-supported WITH-VALUE image/urf
+  EXPECT urf-supported OF-TYPE keyword IN-GROUP printer-attributes-tag
+  EXPECT media-col-database OF-TYPE collection IN-GROUP printer-attributes-tag
+  EXPECT media-col-default OF-TYPE collection IN-GROUP printer-attributes-tag
+  EXPECT print-color-mode-supported WITH-VALUE color
+  EXPECT printer-resolution-supported OF-TYPE resolution IN-GROUP printer-attributes-tag
+}

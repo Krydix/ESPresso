@@ -1,0 +1,80 @@
+name: Build firmware and deploy installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set setup Wi-Fi identity
+        run: echo "ESPRESSO_SETUP_SUFFIX=$(git rev-parse HEAD | cut -c1-4 | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
+
+      - name: Run host tests
+        run: make test
+
+      - name: Validate IPP with CUPS
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cups-ipp-utils
+          make test-cups
+
+      - name: Install ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v5.4.1
+
+      - name: Build firmware
+        run: idf.py build
+
+      - name: Stage web installer
+        run: make web-installer IDF_PATH="$IDF_PATH"
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: espresso-esp32s3-${{ github.sha }}
+          path: |
+            build/espresso.bin
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flasher_args.json
+
+      - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web-installer
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

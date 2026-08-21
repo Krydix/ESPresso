@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f2f2f7">
+  <title>ESPresso — Web Installer</title>
+  <meta name="description" content="Install ESPresso on an ESP32-S3 from Chrome or Edge.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" defer></script>
+  <style>
+    :root{color-scheme:light dark;--bg:#f2f2f7;--group:#fff;--control:#f2f2f7;--label:#000;--secondary:#6e6e73;--tertiary:#8e8e93;--separator:rgba(60,60,67,.2);--blue:#007aff;--green:#34c759;--red:#ff3b30}
+    @media(prefers-color-scheme:dark){:root{--bg:#000;--group:#1c1c1e;--control:#2c2c2e;--label:#fff;--secondary:#98989f;--tertiary:#636366;--separator:rgba(84,84,88,.65);--blue:#0a84ff;--green:#30d158;--red:#ff453a}}
+    *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:var(--bg);color:var(--label);font:17px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}.page{width:min(100% - 32px,720px);margin:auto;padding:max(20px,env(safe-area-inset-top)) 0 max(60px,env(safe-area-inset-bottom))}
+    .topbar{height:44px;display:flex;align-items:center;justify-content:space-between}.topbar strong{font-weight:650;letter-spacing:-.02em}.topbar span{color:var(--secondary);font-size:13px}.hero{padding:52px 8px 34px;text-align:center}.logo-wrap{width:min(100%,310px);margin:0 auto 30px;padding:10px 18px;border-radius:22px;background:#fff}.logo{display:block;width:100%;height:auto}.hero h1{max-width:620px;margin:0 auto;font-size:clamp(40px,8vw,61px);line-height:.98;letter-spacing:-.055em}.hero p{max-width:540px;margin:18px auto 0;color:var(--secondary);font-size:17px;line-height:1.45}
+    .section{margin:0 0 30px}.section-title{margin:0 17px 7px;color:var(--secondary);font-size:13px;font-weight:400;text-transform:uppercase}.group{overflow:hidden;border-radius:14px;background:var(--group)}.row{position:relative;min-height:58px;display:flex;align-items:center;gap:13px;padding:10px 17px}.row+.row:before{content:"";position:absolute;left:61px;right:0;top:0;height:.5px;background:var(--separator)}.icon{flex:0 0 31px;width:31px;height:31px;display:grid;place-items:center;border-radius:7px;color:#fff}.icon svg{width:19px;height:19px}.icon.usb{background:#5856d6}.icon.firmware{background:var(--blue)}.icon.wifi{background:var(--green)}.copy{min-width:0;flex:1}.label{display:block;letter-spacing:-.012em}.detail{display:block;margin-top:1px;color:var(--secondary);font-size:13px;overflow-wrap:anywhere}.value{max-width:45%;color:var(--secondary);font-size:14px;text-align:right;overflow-wrap:anywhere}.note{margin:8px 17px 0;color:var(--secondary);font-size:13px;line-height:1.4}
+    .install{padding:20px 17px 18px}.install h2{margin:0;font-size:20px;letter-spacing:-.025em}.install p{margin:5px 0 18px;color:var(--secondary);font-size:14px}.button-shell{width:100%;min-height:48px;display:flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;background:var(--blue);color:#fff;font:600 17px/1 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;cursor:pointer}.button-shell svg{width:20px}.support{display:block;color:var(--red);font-size:14px}.install-note{margin:10px 0 0!important;text-align:center;font-size:12px!important}esp-web-install-button{display:block}
+    .step-number{flex:0 0 31px;width:31px;height:31px;display:grid;place-items:center;border-radius:50%;background:var(--control);color:var(--blue);font-size:14px;font-weight:650}.chevron{width:8px;height:8px;border-top:2px solid var(--tertiary);border-right:2px solid var(--tertiary);transform:rotate(45deg)}.privacy{margin:38px 17px 0;color:var(--secondary);font-size:12px;text-align:center}.hidden{display:none!important}
+    .success{padding:24px;text-align:center}.check{width:58px;height:58px;display:grid;place-items:center;margin:0 auto 14px;border-radius:50%;background:var(--green);color:#fff}.check svg{width:30px}.success h2{margin:0;font-size:24px}.success p{margin:7px auto 18px;color:var(--secondary);font-size:14px}.qr{width:244px;min-height:244px;display:grid;place-items:center;margin:0 auto 17px;padding:12px;border-radius:20px;background:#fff}.qr img{display:block!important;max-width:220px;height:auto!important}.qr canvas{display:none!important}.ssid{display:inline-block;padding:8px 13px;border-radius:9px;background:var(--control);font:600 15px/1.2 ui-monospace,"SFMono-Regular",Menlo,monospace}.manual{margin:11px 0 0!important;font-size:12px!important}
+    @media(max-width:520px){.page{width:min(100% - 20px,720px)}.hero{padding-top:38px}.logo-wrap{width:260px}.hero h1{font-size:39px}.value{max-width:40%;font-size:13px}.success{padding:20px 14px}.qr{width:232px;min-height:232px}.qr img{max-width:208px}}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar"><strong>ESPresso</strong><span>Web Installer</span></header>
+  <main>
+    <section class="hero">
+      <div class="logo-wrap"><img class="logo" src="./logo.png" alt="ESPresso"></div>
+      <h1>Your printer isn’t obsolete.</h1>
+      <p>Give a legacy AirPrint printer a current endpoint with one tiny ESP32‑S3 and a minute in your browser.</p>
+    </section>
+
+    <section class="section" aria-labelledby="deviceHeading">
+      <h2 class="section-title" id="deviceHeading">Your ESPresso</h2>
+      <div class="group">
+        <div class="row"><span class="icon usb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v13m0-13-3 3m3-3 3 3M8 10H5v4m7 2-3 3m3-3 3 3m-6 0h6"/></svg></span><span class="copy"><span class="label">Hardware</span><span class="detail">Connect with a USB data cable</span></span><span class="value">ESP32‑S3</span></div>
+        <div class="row"><span class="icon firmware"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg></span><span class="copy"><span class="label">Firmware</span><span class="detail" id="buildDate">Loading build…</span></span><span class="value" id="firmwareVersion">Latest</span></div>
+        <div class="row"><span class="icon wifi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><path d="M4.9 9.9a10 10 0 0 1 14.2 0M7.8 12.8a6 6 0 0 1 8.4 0m-5.6 2.9a2 2 0 0 1 2.8 0M12 19h.01"/></svg></span><span class="copy"><span class="label">Setup Wi‑Fi</span><span class="detail">Open network used only for onboarding</span></span><span class="value" id="setupSsid">ESPresso-DEV0</span></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="installHeading">
+      <h2 class="section-title" id="installHeading">Install</h2>
+      <div class="group"><div class="install">
+        <h2>Ready when your ESP32 is.</h2>
+        <p>Flashing replaces the board’s existing firmware. Your browser will ask you to approve its serial connection.</p>
+        <esp-web-install-button manifest="./manifest.json">
+          <button class="button-shell" slot="activate" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>Install ESPresso</button>
+          <span slot="unsupported" class="support">Open this page in desktop Chrome or Edge to install over USB.</span>
+          <span slot="not-allowed" class="support">Web Serial requires HTTPS or localhost.</span>
+        </esp-web-install-button>
+        <p class="install-note">Keep this page open. Your setup QR appears when installation finishes.</p>
+      </div></div>
+    </section>
+
+    <section class="section" aria-labelledby="nextHeading">
+      <h2 class="section-title" id="nextHeading">What Happens Next</h2>
+      <div class="group">
+        <div class="row"><span class="step-number">1</span><span class="copy"><span class="label">Flash ESPresso</span><span class="detail">Choose the connected ESP32‑S3 above</span></span><span class="chevron"></span></div>
+        <div class="row"><span class="step-number">2</span><span class="copy"><span class="label">Scan the Wi‑Fi QR</span><span class="detail">Join the matching ESPresso setup network</span></span><span class="chevron"></span></div>
+        <div class="row"><span class="step-number">3</span><span class="copy"><span class="label">Choose Wi‑Fi and Printer</span><span class="detail">The captive portal guides the remaining setup</span></span><span class="chevron"></span></div>
+      </div>
+    </section>
+
+    <section class="section hidden" id="successPanel" aria-live="polite">
+      <h2 class="section-title">Installation Complete</h2>
+      <div class="group success">
+        <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m5 12 4 4L19 6"/></svg></div>
+        <h2>Connect to ESPresso</h2><p>Scan with your phone’s camera to join the setup network.</p>
+        <div class="qr" id="pageQr"></div><div class="ssid" id="pageSsid">ESPresso-DEV0</div><p class="manual">No password is required. The setup page should open automatically.</p>
+      </div>
+    </section>
+    <p class="privacy">ESPresso only relays compatible AirPrint data. It does not rasterize jobs or add printer languages.</p>
+  </main>
+</div>
+<script>
+  let setupSsid='ESPresso-DEV0';
+  const qrPayload=()=> 'WIFI:T:nopass;S:'+setupSsid.replace(/([\\;,":])/g,'\\$1')+';;';
+  function renderQr(host){if(!host||host.dataset.rendered||typeof QRCode==='undefined')return false;host.dataset.rendered='true';new QRCode(host,{text:qrPayload(),width:220,height:220,colorDark:'#000000',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});return true}
+  function revealSuccess(){const panel=document.getElementById('successPanel');panel.classList.remove('hidden');document.getElementById('pageSsid').textContent=setupSsid;if(!renderQr(document.getElementById('pageQr')))setTimeout(revealSuccess,100);panel.scrollIntoView({behavior:'smooth',block:'start'})}
+  function decorateSuccessDialog(dialog){
+    if(dialog.getAttribute('state')!=='INSTALL'||!dialog.shadowRoot)return;
+    const message=dialog.shadowRoot.querySelector('ewt-page-message[slot="content"]');
+    const actions=dialog.shadowRoot.querySelector('div[slot="actions"]');
+    if(!message||!actions||message.label!=='Installation complete!')return;
+    revealSuccess();
+    if(dialog.shadowRoot.getElementById('espresso-wifi-card'))return;
+    const card=document.createElement('div');card.id='espresso-wifi-card';card.slot='content';
+    card.innerHTML='<div style="margin-top:18px;padding:18px;border-radius:20px;background:#f2f2f7;text-align:center;font-family:-apple-system,BlinkMacSystemFont,Helvetica Neue,Arial,sans-serif"><p style="margin:0 0 5px;color:#000;font-size:18px;font-weight:650">Connect to ESPresso</p><p style="margin:0 0 14px;color:#6e6e73;font-size:13px">Scan to join the setup Wi‑Fi network.</p><div id="dialog-qr" style="width:220px;min-height:220px;display:grid;place-items:center;margin:auto;padding:10px;border-radius:16px;background:#fff"></div><div style="display:inline-block;margin-top:12px;padding:7px 11px;border-radius:8px;background:#fff;color:#000;font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace">'+setupSsid+'</div></div>';
+    actions.before(card);renderQr(card.querySelector('#dialog-qr'));
+  }
+  function watchDialog(dialog){if(!dialog.shadowRoot||dialog.dataset.espressoObserver==='true'){decorateSuccessDialog(dialog);return}dialog.dataset.espressoObserver='true';new MutationObserver(()=>decorateSuccessDialog(dialog)).observe(dialog.shadowRoot,{childList:true,subtree:true,attributes:true});decorateSuccessDialog(dialog)}
+  new MutationObserver(()=>document.querySelectorAll('ewt-install-dialog').forEach(watchDialog)).observe(document.body,{childList:true,subtree:true});
+  document.querySelectorAll('ewt-install-dialog').forEach(watchDialog);
+  fetch('./build-info.json').then(r=>r.ok?r.json():Promise.reject()).then(info=>{setupSsid=info.setupSsid||setupSsid;document.getElementById('setupSsid').textContent=setupSsid;document.getElementById('pageSsid').textContent=setupSsid;document.getElementById('firmwareVersion').textContent=info.version||'Latest';if(info.builtAt){const date=new Date(info.builtAt);document.getElementById('buildDate').textContent='Built '+date.toLocaleDateString(undefined,{dateStyle:'medium'})}}).catch(()=>{document.getElementById('buildDate').textContent='Latest available build'});
+</script>
+</body>
+</html>

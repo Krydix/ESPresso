@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f2f2f7">
+  <title>ESPresso Settings</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f2f2f7;--group:#fff;--control:#f2f2f7;--label:#000;--secondary:#6e6e73;--tertiary:#8e8e93;--separator:rgba(60,60,67,.2);--blue:#007aff;--green:#34c759;--orange:#ff9500;--red:#ff3b30}
+    @media(prefers-color-scheme:dark){:root{--bg:#000;--group:#1c1c1e;--control:#2c2c2e;--label:#fff;--secondary:#98989f;--tertiary:#636366;--separator:rgba(84,84,88,.65);--blue:#0a84ff;--green:#30d158;--orange:#ff9f0a;--red:#ff453a}}
+    *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:var(--bg);color:var(--label);font:17px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:wait}.page{width:min(100% - 32px,680px);margin:auto;padding:max(16px,env(safe-area-inset-top)) 0 max(50px,env(safe-area-inset-bottom))}
+    nav{height:44px;display:flex;align-items:center;justify-content:space-between}.back{width:40px;height:40px;display:grid;place-items:center;border:0;border-radius:50%;background:var(--group);color:var(--label)}.back:before{content:"";width:11px;height:11px;border-left:2.5px solid;border-bottom:2.5px solid;transform:rotate(45deg) translate(2px,-2px)}.firmware{color:var(--secondary);font-size:12px}
+    .intro{margin:28px 0 42px;padding:28px 26px;border-radius:28px;background:var(--group)}.app-icon{width:70px;height:70px;display:grid;place-items:center;margin-bottom:23px;border-radius:17px;background:linear-gradient(#5be37d,#20c859);box-shadow:inset 0 1px 0 rgba(255,255,255,.55);color:#fff}.app-icon svg{width:43px;height:43px}.intro h1{margin:0 0 5px;font-size:28px;line-height:1.15;letter-spacing:-.035em}.intro p{margin:0;color:var(--secondary);font-size:16px;line-height:1.45}.intro a{color:var(--blue);text-decoration:none}
+    .section{margin-bottom:34px}.section-title{margin:0 17px 7px;color:var(--secondary);font-size:13px;font-weight:400;text-transform:uppercase}.group{overflow:hidden;border-radius:14px;background:var(--group)}.row{position:relative;min-height:56px;display:flex;align-items:center;gap:12px;padding:10px 17px}.row+.row:before{content:"";position:absolute;left:17px;right:0;top:0;height:.5px;background:var(--separator)}.row.stacked{display:block;padding:17px}.row-copy{min-width:0;flex:1}.label{display:block;letter-spacing:-.015em}.detail{display:block;margin-top:2px;color:var(--secondary);font-size:13px;overflow-wrap:anywhere}.value{max-width:48%;color:var(--secondary);font-size:15px;text-align:right;overflow-wrap:anywhere}.light{width:10px;height:10px;border-radius:50%;background:var(--tertiary)}.light.ok{background:var(--green)}.light.warn{background:var(--orange)}
+    .controls{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}.button{min-height:38px;padding:0 15px;border:0;border-radius:10px;background:var(--blue);color:#fff;font-size:15px;font-weight:600}.button.secondary{background:var(--control);color:var(--blue)}.button.danger{background:transparent;color:var(--red);padding-left:0}.form{display:grid;gap:10px;margin-top:14px}.field{width:100%;min-height:44px;padding:0 12px;border:0;border-radius:10px;outline:1px solid var(--separator);background:var(--control);color:var(--label)}.field:focus{outline:2px solid var(--blue)}
+    .printer-list{display:grid;gap:10px;margin-top:14px}.printer-option{padding:13px;border-radius:12px;background:var(--control)}.printer-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.printer-option strong{display:block}.meta{margin-top:2px;color:var(--secondary);font-size:12px;overflow-wrap:anywhere}.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}.badge{padding:4px 7px;border-radius:6px;background:color-mix(in srgb,var(--blue) 13%,transparent);color:var(--blue);font-size:11px;font-weight:600}.printer-option .button{min-height:34px;white-space:nowrap}.message{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--control);color:var(--secondary);font-size:13px}.message.ok{background:color-mix(in srgb,var(--green) 13%,var(--group));color:var(--green)}.message.error{background:color-mix(in srgb,var(--red) 12%,var(--group));color:var(--red)}.hidden{display:none!important}.note{margin:8px 17px 0;color:var(--secondary);font-size:13px;line-height:1.4}.privacy{display:flex;gap:12px;margin:42px 17px 0;color:var(--secondary);font-size:13px}.privacy svg{flex:0 0 25px;width:25px}.version{margin-top:30px;color:var(--tertiary);font-size:12px;text-align:center}
+    @media(max-width:520px){.page{width:min(100% - 20px,680px)}.intro{margin-top:22px;margin-bottom:44px;padding:25px 24px;border-radius:26px}.intro h1{font-size:27px}.value{max-width:42%;font-size:14px}.printer-top{display:block}.printer-option .button{width:100%;margin-top:12px}.controls .button{flex:1}.controls .danger{flex-basis:100%;text-align:left}}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important}}
+  </style>
+</head>
+<body>
+<div class="page">
+  <nav><button class="back" type="button" aria-label="Back" onclick="history.back()"></button><span class="firmware" id="version">Starting…</span></nav>
+  <main>
+    <section class="intro">
+      <div class="app-icon" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 15V8h24v7"/><rect x="7" y="15" width="34" height="22" rx="7"/><path d="M13 29h22v12H13z"/><circle cx="35" cy="21" r="1.5" fill="currentColor" stroke="none"/></svg></div>
+      <h1>AirPrint Bridge</h1>
+      <p>ESPresso gives your legacy AirPrint printer a current, driverless endpoint for today’s Apple devices. <a href="#about">Learn more…</a></p>
+    </section>
+
+    <section class="section" aria-labelledby="statusHeading">
+      <h2 class="section-title" id="statusHeading">Status</h2>
+      <div class="group">
+        <div class="row"><span class="row-copy"><span class="label">Wi‑Fi</span></span><span class="value" id="wifiStatus">Checking…</span></div>
+        <div class="row"><span class="row-copy"><span class="label">Legacy Printer</span></span><span class="value" id="printerStatus">Not selected</span></div>
+        <div class="row"><span class="row-copy"><span class="label">AirPrint Endpoint</span><span class="detail" id="statusText">Checking device…</span></span><span class="light" id="statusDot" aria-hidden="true"></span></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="wifiHeading">
+      <h2 class="section-title" id="wifiHeading">Wi‑Fi</h2>
+      <div class="group"><div class="row stacked">
+        <span class="label">Home Network</span><span class="detail" id="wifiCopy">Scan for your network to begin.</span>
+        <div class="controls"><button class="button secondary" id="scanWifi">Scan Networks</button><button class="button danger hidden" id="forgetWifi">Forget Wi‑Fi</button></div>
+        <form class="form hidden" id="wifiForm"><select class="field" id="wifiSsid" required aria-label="Wi-Fi network"></select><input class="field" id="wifiPassword" type="password" maxlength="64" placeholder="Wi‑Fi Password" autocomplete="current-password"><button class="button" type="submit">Connect</button></form>
+        <div id="wifiMessage"></div>
+      </div></div>
+      <p class="note">The setup network closes shortly after ESPresso connects. Settings remain available at espresso.local.</p>
+    </section>
+
+    <section class="section" aria-labelledby="printerHeading">
+      <h2 class="section-title" id="printerHeading">Printer</h2>
+      <div class="group">
+        <div class="row stacked"><span class="label">Choose an AirPrint Printer</span><span class="detail" id="printerCopy">Discovery starts after Wi‑Fi is connected.</span><div class="controls"><button class="button secondary" id="scanPrinters">Find Printers</button></div><div class="printer-list" id="printerList"></div><div id="printerMessage"></div></div>
+        <div class="row"><span class="row-copy"><span class="label">Compatibility</span><span class="detail" id="capabilityNote">Waiting for a printer selection.</span></span></div>
+      </div>
+      <p class="note">ESPresso relays compatible AirPrint raster data unchanged. It doesn’t render documents or add printer languages.</p>
+    </section>
+
+    <div class="privacy" id="about"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg><span>Print jobs stream directly through ESPresso to the selected printer and are never stored.</span></div>
+  </main>
+</div>
+<script>
+  const $=id=>document.getElementById(id);
+  const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const api=async(path,options={})=>{const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options});if(!response.ok){const type=response.headers.get('content-type')||'';const raw=await response.text();const detail=type.includes('text/html')?'':raw.replace(/\s+/g,' ').trim().slice(0,180);throw new Error(detail||response.status+' '+response.statusText)}return response.json()};
+  const message=(id,text,kind='')=>{const host=$(id);host.replaceChildren();if(text){const node=document.createElement('div');node.className='message '+kind;node.textContent=text;host.append(node)}};
+  async function refresh(){try{const s=await api('/api/status');$('version').textContent='Firmware '+s.version;$('wifiCopy').textContent=s.wifi.connected?'Connected to '+s.wifi.ssid+' at '+s.wifi.ip+'.':'Join '+s.wifi.setupSsid+', then choose your home network.';$('wifiStatus').textContent=s.wifi.connected?s.wifi.ssid:'Setup required';$('forgetWifi').classList.toggle('hidden',!s.wifi.connected);$('printerCopy').textContent=s.printer.selected?s.printer.name+' · '+s.printer.address+s.printer.path:'No target selected yet.';$('printerStatus').textContent=s.printer.selected?s.printer.name:'Not selected';$('statusDot').className='light '+(s.ready?'ok':'warn');$('statusText').textContent=s.ready?'Ready':s.wifi.connected?'Select a printer':'Setup required';$('capabilityNote').textContent=s.printer.selected?(s.printer.pdl||'image/urf')+(s.printer.urf?' · URF '+s.printer.urf:''):'Waiting for a printer selection.';return s}catch(e){$('statusText').textContent='Device unavailable';message('wifiMessage',e.message,'error')}}
+  $('scanWifi').onclick=async()=>{const b=$('scanWifi');b.disabled=true;message('wifiMessage','Scanning…');try{const result=await api('/api/wifi/scan');const networks=result.networks;$('wifiSsid').innerHTML=networks.map(n=>'<option value="'+esc(n.ssid)+'">'+esc(n.ssid)+' · '+Number(n.rssi)+' dBm'+(n.secure?' · Secured':'')+'</option>').join('');$('wifiForm').classList.remove('hidden');message('wifiMessage',networks.length?networks.length+' network'+(networks.length===1?'':'s')+' found.':'No networks found.')}catch(e){message('wifiMessage',e.message,'error')}finally{b.disabled=false}};
+  $('wifiForm').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;try{await api('/api/wifi/connect',{method:'POST',body:JSON.stringify({ssid:$('wifiSsid').value,password:$('wifiPassword').value})});message('wifiMessage','Credentials saved. Rejoin your normal Wi‑Fi, then open espresso.local.','ok');setTimeout(refresh,5000)}catch(err){message('wifiMessage',err.message,'error')}finally{b.disabled=false}};
+  $('forgetWifi').onclick=async()=>{if(!confirm('Forget this Wi‑Fi network and restart setup mode?'))return;await api('/api/wifi',{method:'DELETE'}).catch(()=>{});message('wifiMessage','Restarting in setup mode…','ok')};
+  $('scanPrinters').onclick=async()=>{const b=$('scanPrinters');b.disabled=true;message('printerMessage','Looking for compatible IPP printers…');try{const result=await api('/api/printers?refresh=1');const printers=result.printers;$('printerList').innerHTML=printers.map(p=>'<div class="printer-option"><div class="printer-top"><div><strong>'+esc(p.name||p.instance)+'</strong><div class="meta">'+esc(p.address)+':'+Number(p.port)+esc(p.path)+'</div><div class="badges">'+(p.urf?'<span class="badge">AirPrint / URF</span>':'')+(p.capabilityQueried?'<span class="badge">IPP queried</span>':'')+(p.color?'<span class="badge">Color</span>':'')+(p.duplex?'<span class="badge">Duplex</span>':'')+'</div></div><button class="button" data-index="'+Number(p.index)+'">Use Printer</button></div></div>').join('');$('printerList').querySelectorAll('button').forEach(x=>x.onclick=()=>selectPrinter(Number(x.dataset.index),x));message('printerMessage',printers.length?printers.length+' compatible endpoint'+(printers.length===1?'':'s')+' found.':'No printer reported both image/urf and usable URF capabilities.')}catch(e){message('printerMessage',e.message,'error')}finally{b.disabled=false}};
+  async function selectPrinter(index,button){button.disabled=true;try{await api('/api/printer',{method:'POST',body:JSON.stringify({index})});message('printerMessage','Selected and advertised as a modern AirPrint endpoint.','ok');await refresh()}catch(e){message('printerMessage',e.message,'error')}finally{button.disabled=false}}
+  refresh().then(s=>{if(s?.wifi.connected)$('scanPrinters').click()});
+</script>
+</body>
+</html>

@@ -24,7 +24,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install CUPS development tools
         if: runner.os == 'Linux'
@@ -45,7 +45,7 @@ jobs:
         run: make test-conformance-report
 
       - name: Upload conformance roadmap
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cups-conformance-roadmap-${{ matrix.os }}-${{ github.sha }}
           path: |
@@ -69,7 +69,7 @@ jobs:
         target: [esp32, esp32s2, esp32s3]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set setup Wi-Fi identity
         run: echo "ESPRESSO_SETUP_SUFFIX=$(git rev-parse HEAD | cut -c1-4 | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
@@ -87,7 +87,7 @@ jobs:
             build
 
       - name: Upload ${{ matrix.target }} build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: espresso-${{ matrix.target }}
           if-no-files-found: error
@@ -103,13 +103,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set setup Wi-Fi identity
         run: echo "ESPRESSO_SETUP_SUFFIX=$(git rev-parse HEAD | cut -c1-4 | tr '[:lower:]' '[:upper:]')" >> "$GITHUB_ENV"
 
       - name: Download target builds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: espresso-*
           path: build-artifacts
@@ -123,7 +123,7 @@ jobs:
             --output-dir build/web-installer
 
       - name: Upload packaged installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: espresso-web-installer
           path: build/web-installer

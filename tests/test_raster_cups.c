@@ -1,3 +1,7 @@
+#ifndef __APPLE__
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "raster_converter.h"
 
 #include <cups/raster.h>

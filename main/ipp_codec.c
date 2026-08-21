@@ -17,6 +17,7 @@
 #define IPP_TAG_BOOLEAN 0x22
 #define IPP_TAG_ENUM 0x23
 #define IPP_TAG_OCTETSTRING 0x30
+#define IPP_TAG_DATETIME 0x31
 #define IPP_TAG_RESOLUTION 0x32
 #define IPP_TAG_RANGE 0x33
 #define IPP_TAG_BEGIN_COLLECTION 0x34
@@ -30,6 +31,7 @@
 #define IPP_TAG_LANGUAGE 0x48
 #define IPP_TAG_MIMETYPE 0x49
 #define IPP_TAG_MEMBER_NAME 0x4a
+#define IPP_TAG_UNKNOWN 0x12
 
 #define IPP_STATUS_ERROR_BAD_REQUEST 0x0400
 
@@ -830,7 +832,9 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
         return false;
     }
     if (!(present & PRESENT_URI_SECURITY) &&
-        !append_string(buffer, IPP_TAG_KEYWORD, "uri-security-supported", "none")) {
+        !append_string(buffer, IPP_TAG_KEYWORD, "uri-security-supported",
+                       strncmp(printer_uri, "ipps://", 7) == 0 ?
+                           "tls" : "none")) {
         return false;
     }
     if (!(present & PRESENT_REFERENCE_URI_SCHEMES) &&
@@ -915,10 +919,18 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
         !append_i32(buffer, IPP_TAG_INTEGER, "queued-job-count", 0)) {
         return false;
     }
-    if (!(present & PRESENT_FORMATS) && target->pdl[0] &&
-        !append_csv_attributes(buffer, IPP_TAG_MIMETYPE,
-                               "document-format-supported", target->pdl)) {
-        return false;
+    if (!(present & PRESENT_FORMATS) && target->pdl[0]) {
+        if (!append_csv_attributes(buffer, IPP_TAG_MIMETYPE,
+                                   "document-format-supported", target->pdl)) {
+            return false;
+        }
+        if (csv_contains(target->pdl, "image/urf", strlen("image/urf")) &&
+            !csv_contains(target->pdl, "image/pwg-raster",
+                          strlen("image/pwg-raster")) &&
+            !append_string(buffer, IPP_TAG_MIMETYPE, NULL,
+                           "image/pwg-raster")) {
+            return false;
+        }
     }
     if (!(present & PRESENT_FORMAT_DEFAULT)) {
         const char *format_default =
@@ -1185,7 +1197,117 @@ static bool append_synthesized_attributes(byte_buffer_t *buffer, uint64_t presen
             !append_string(buffer, IPP_TAG_KEYWORD, NULL, "print-color-mode") ||
             (target->resolution_low_dpi &&
              !append_string(buffer, IPP_TAG_KEYWORD, NULL,
-                            "printer-resolution"))) {
+                            "printer-resolution")) ||
+            !append_string(buffer, IPP_TAG_KEYWORD, NULL,
+                           "print-content-optimize") ||
+            !append_string(buffer, IPP_TAG_KEYWORD, NULL,
+                           "print-rendering-intent")) {
+            return false;
+        }
+    }
+    /* Facade-owned IPP Everywhere metadata. These values describe the relay,
+     * not capabilities invented for the legacy printer. */
+    uint8_t yes = 1;
+    uint8_t no = 0;
+    static const uint8_t epoch[] = {
+        0x07, 0xb2, 1, 1, 0, 0, 0, 0, '+', 0, 0,
+    };
+    if (!append_attribute(buffer, IPP_TAG_BOOLEAN, "job-ids-supported",
+                          &yes, 1) ||
+        !append_attribute(buffer, IPP_TAG_BOOLEAN,
+                          "preferred-attributes-supported", &no, 1) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "media-bottom-margin-supported", 0) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "media-left-margin-supported", 0) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "media-right-margin-supported", 0) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "media-top-margin-supported", 0) ||
+        (target->media_default[0] &&
+         !append_string(buffer, IPP_TAG_KEYWORD, "media-ready",
+                        target->media_default)) ||
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "print-content-optimize-default", "auto") ||
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "print-content-optimize-supported", "auto") ||
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "print-rendering-intent-default", "auto") ||
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "print-rendering-intent-supported", "auto") ||
+        !append_attribute(buffer, IPP_TAG_DATETIME,
+                          "printer-config-change-date-time", epoch,
+                          sizeof(epoch)) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "printer-config-change-time", 0) ||
+        !append_string(buffer, IPP_TAG_TEXT, "printer-device-id",
+                       "MFG:ESPresso;MDL:Legacy AirPrint Bridge;CMD:URF,PWG;") ||
+        !append_attribute(buffer, IPP_TAG_UNKNOWN, "printer-geo-location",
+                          NULL, 0) ||
+        !append_string(buffer, IPP_TAG_KEYWORD,
+                       "printer-get-attributes-supported",
+                       "document-format") ||
+        !append_string(buffer, IPP_TAG_URI, "printer-icons",
+                       "http://espresso.local/favicon.svg") ||
+        !append_string(buffer, IPP_TAG_TEXT, "printer-organization",
+                       "") ||
+        !append_string(buffer, IPP_TAG_TEXT,
+                       "printer-organizational-unit", "") ||
+        !append_attribute(buffer, IPP_TAG_DATETIME,
+                          "printer-state-change-date-time", epoch,
+                          sizeof(epoch)) ||
+        !append_i32(buffer, IPP_TAG_INTEGER,
+                    "printer-state-change-time", 0) ||
+        !append_string(buffer, IPP_TAG_OCTETSTRING, "printer-supply",
+                       "index=1;class=supplyThatIsConsumed;type=unknown;"
+                       "unit=unknown;maxcapacity=-2;level=-2;colorantname=unknown") ||
+        !append_string(buffer, IPP_TAG_TEXT,
+                       "printer-supply-description", "Legacy printer supply") ||
+        !append_string(buffer, IPP_TAG_URI, "printer-supply-info-uri",
+                       "http://espresso.local/") ||
+        !append_string(buffer, IPP_TAG_KEYWORD, "which-jobs-supported",
+                       "completed") ||
+        !append_string(buffer, IPP_TAG_KEYWORD, NULL, "not-completed") ||
+        !append_string(buffer, IPP_TAG_KEYWORD, NULL, "all")) {
+        return false;
+    }
+    if (target->operations_supported & (1ULL << IPP_OPERATION_CREATE_JOB)) {
+        if (!append_i32(buffer, IPP_TAG_INTEGER,
+                        "multiple-operation-time-out", 60) ||
+            !append_string(buffer, IPP_TAG_KEYWORD,
+                           "multiple-operation-time-out-action",
+                           "abort-job")) {
+            return false;
+        }
+    }
+    if (csv_contains(target->pdl, "image/urf", strlen("image/urf"))) {
+        if ((target->resolution_low_dpi &&
+             !append_resolution(buffer,
+                                "pwg-raster-document-resolution-supported",
+                                target->resolution_low_dpi)) ||
+            (target->resolution_high_dpi > target->resolution_low_dpi &&
+             !append_resolution(buffer, NULL,
+                                target->resolution_high_dpi)) ||
+            !append_string(buffer, IPP_TAG_KEYWORD,
+                           "pwg-raster-document-sheet-back", "normal")) {
+            return false;
+        }
+        bool first_type = true;
+        if (value_contains((const uint8_t *)target->urf, strlen(target->urf),
+                           "w8")) {
+            if (!append_string(buffer, IPP_TAG_KEYWORD,
+                               "pwg-raster-document-type-supported",
+                               "sgray_8")) {
+                return false;
+            }
+            first_type = false;
+        }
+        if (value_contains((const uint8_t *)target->urf, strlen(target->urf),
+                           "srgb24") &&
+            !append_string(buffer, IPP_TAG_KEYWORD,
+                           first_type ?
+                               "pwg-raster-document-type-supported" : NULL,
+                           "srgb_8")) {
             return false;
         }
     }
@@ -1364,6 +1486,13 @@ static job_attribute_action_t facade_job_attribute_action(
         *replacement_name = "output-mode";
         return JOB_ATTRIBUTE_KEEP;
     }
+    if (strcmp(name, "print-content-optimize") == 0 ||
+        strcmp(name, "print-rendering-intent") == 0) {
+        bool neutral = tag == IPP_TAG_KEYWORD &&
+                       equal_span((const char *)value, value_length,
+                                  "auto", strlen("auto"));
+        return neutral ? JOB_ATTRIBUTE_DROP : JOB_ATTRIBUTE_UNSUPPORTED;
+    }
     struct neutral_default {
         const char *name;
         uint32_t capability;
@@ -1407,6 +1536,7 @@ static job_attribute_action_t facade_job_attribute_action(
 
 static ipp_codec_result_t normalize_facade_job_defaults(
     const uint8_t *input, size_t input_length, const printer_target_t *target,
+    const char *upstream_document_format,
     uint8_t **output, size_t *output_length, size_t *attributes_length,
     char *rejected_attribute, size_t rejected_attribute_size)
 {
@@ -1478,6 +1608,8 @@ static ipp_codec_result_t normalize_facade_job_defaults(
         cursor += value_length;
 
         const char *replacement_name = NULL;
+        const uint8_t *output_value = value;
+        size_t output_value_length = value_length;
         job_attribute_action_t action = JOB_ATTRIBUTE_KEEP;
         if (current_group == IPP_TAG_JOB_ATTRIBUTES) {
             action = facade_job_attribute_action(
@@ -1495,6 +1627,13 @@ static ipp_codec_result_t normalize_facade_job_defaults(
         if (action == JOB_ATTRIBUTE_DROP) {
             continue;
         }
+        if (upstream_document_format &&
+            current_group == IPP_TAG_OPERATION_ATTRIBUTES &&
+            tag == IPP_TAG_MIMETYPE &&
+            strcmp(current_name, "document-format") == 0) {
+            output_value = (const uint8_t *)upstream_document_format;
+            output_value_length = strlen(upstream_document_format);
+        }
         if (!current_group_emitted && !append(&result, &current_group, 1)) {
             free(result.data);
             return IPP_CODEC_NO_MEMORY;
@@ -1510,8 +1649,8 @@ static ipp_codec_result_t normalize_facade_job_defaults(
         if (!append(&result, &tag, 1) ||
             !append_u16(&result, output_name_length) ||
             !append(&result, output_name_bytes, output_name_length) ||
-            !append_u16(&result, value_length) ||
-            !append(&result, value, value_length)) {
+            !append_u16(&result, output_value_length) ||
+            !append(&result, output_value, output_value_length)) {
             free(result.data);
             return IPP_CODEC_NO_MEMORY;
         }
@@ -1546,6 +1685,19 @@ ipp_codec_result_t ipp_codec_rewrite_request_diagnostic(
     uint8_t **output, size_t *output_length, size_t *attributes_length,
     char *rejected_attribute, size_t rejected_attribute_size)
 {
+    return ipp_codec_rewrite_request_for_format_diagnostic(
+        input, input_length, printer_uri, uri_authority, target, NULL, output,
+        output_length, attributes_length, rejected_attribute,
+        rejected_attribute_size);
+}
+
+ipp_codec_result_t ipp_codec_rewrite_request_for_format_diagnostic(
+    const uint8_t *input, size_t input_length, const char *printer_uri,
+    const char *uri_authority, const printer_target_t *target,
+    const char *upstream_document_format, uint8_t **output,
+    size_t *output_length, size_t *attributes_length,
+    char *rejected_attribute, size_t rejected_attribute_size)
+{
     if (rejected_attribute_size && !rejected_attribute) {
         return IPP_CODEC_MALFORMED;
     }
@@ -1562,7 +1714,8 @@ ipp_codec_result_t ipp_codec_rewrite_request_diagnostic(
         return result;
     }
     result = normalize_facade_job_defaults(
-        rewritten, rewritten_length, target, output, output_length,
+        rewritten, rewritten_length, target, upstream_document_format,
+        output, output_length,
         attributes_length, rejected_attribute, rejected_attribute_size);
     free(rewritten);
     return result;
@@ -2132,6 +2285,23 @@ ipp_codec_result_t ipp_codec_apply_printer_attributes(
                    tag == IPP_TAG_KEYWORD) {
             csv_add_split(target->ipp_versions, sizeof(target->ipp_versions),
                           value, value_length);
+        } else if (strcmp(current_name, "page-ranges-supported") == 0 &&
+                   tag == IPP_TAG_BOOLEAN && value_length == 1) {
+            target->page_ranges_supported = value[0] != 0;
+        } else if (strcmp(current_name, "overrides-supported") == 0 &&
+                   tag == IPP_TAG_KEYWORD) {
+            if (equal_span((const char *)value, value_length,
+                           "document-number", strlen("document-number"))) {
+                target->overrides_document_number = true;
+            } else if (equal_span((const char *)value, value_length,
+                                  "pages", strlen("pages"))) {
+                target->overrides_pages = true;
+            }
+        } else if (strcmp(current_name, "ipp-features-supported") == 0 &&
+                   tag == IPP_TAG_KEYWORD &&
+                   equal_span((const char *)value, value_length,
+                              "ipp-everywhere", strlen("ipp-everywhere"))) {
+            target->ipp_everywhere = true;
         } else if (strcmp(current_name, "printer-make-and-model") == 0) {
             copy_value(target->label, sizeof(target->label), value, value_length);
         } else if (strcmp(current_name, "printer-info") == 0 && !target->label[0]) {

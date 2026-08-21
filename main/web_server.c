@@ -13,6 +13,7 @@
 #include "ipp_proxy.h"
 #include "ota_update.h"
 #include "printer_discovery.h"
+#include "tls_identity.h"
 #include "wifi_manager.h"
 
 extern const char frontend_index_start[] asm("_binary_index_html_start");
@@ -83,6 +84,22 @@ static esp_err_t favicon_handler(httpd_req_t *request)
                            favicon_svg_end - favicon_svg_start);
 }
 
+static esp_err_t certificate_handler(httpd_req_t *request)
+{
+    size_t length = 0;
+    const char *certificate = tls_identity_certificate(&length);
+    if (!certificate || !length) {
+        httpd_resp_set_status(request, "503 Service Unavailable");
+        httpd_resp_set_type(request, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(request, "TLS identity is not ready");
+    }
+    httpd_resp_set_type(request, "application/x-pem-file");
+    httpd_resp_set_hdr(request, "Content-Disposition",
+                       "attachment; filename=espresso-local.pem");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_send(request, certificate, length);
+}
+
 static esp_err_t status_handler(httpd_req_t *request)
 {
     bool connected;
@@ -114,6 +131,8 @@ static esp_err_t status_handler(httpd_req_t *request)
                                                      custom_name);
         cJSON_AddStringToObject(printer, "address", target.address);
         cJSON_AddNumberToObject(printer, "port", target.port);
+        cJSON_AddBoolToObject(printer, "secureTransport",
+                              target.secure_transport);
         cJSON_AddStringToObject(printer, "path", target.resource_path);
         cJSON_AddStringToObject(printer, "pdl", target.pdl);
         cJSON_AddStringToObject(printer, "urf", target.urf);
@@ -462,6 +481,8 @@ esp_err_t web_server_start(void)
     const httpd_uri_t handlers[] = {
         {.uri = "/", .method = HTTP_GET, .handler = root_handler},
         {.uri = "/favicon.svg", .method = HTTP_GET, .handler = favicon_handler},
+        {.uri = "/api/tls-certificate", .method = HTTP_GET,
+         .handler = certificate_handler},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
         {.uri = "/api/jobs", .method = HTTP_GET, .handler = jobs_handler},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler},

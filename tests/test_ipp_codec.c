@@ -260,6 +260,14 @@ static void test_normalizes_frontend_ipp_version(void)
     assert(!contains(output, output_length, "tls"));
     assert(contains(output, output_length, "uri-authentication-supported"));
     assert(contains(output, output_length, "document-format-default"));
+    assert(contains(output, output_length, "image/pwg-raster"));
+    assert(contains(output, output_length,
+                    "pwg-raster-document-resolution-supported"));
+    assert(contains(output, output_length,
+                    "pwg-raster-document-type-supported"));
+    assert(contains(output, output_length, "job-ids-supported"));
+    assert(contains(output, output_length, "printer-device-id"));
+    assert(contains(output, output_length, "printer-icons"));
     assert(contains(output, output_length, "media-col-database"));
     assert(contains(output, output_length, "media-col-default"));
     assert(contains(output, output_length, "media-col-supported"));
@@ -293,6 +301,14 @@ static void test_normalizes_frontend_ipp_version(void)
     assert(contains(output, output_length, "pages-per-minute-color"));
     assert(contains(output, output_length, "copies-default"));
     assert(contains(output, output_length, "media-default"));
+    free(output);
+
+    assert(ipp_codec_normalize_printer_response(
+               message, length, "ipps://espresso.local:8631/ipp/print",
+               "ipps://espresso.local:8631", "bridge-uuid", &target,
+               &output, &output_length, &attributes_length) == IPP_CODEC_OK);
+    assert(contains(output, output_length, "ipps://espresso.local:8631"));
+    assert(contains(output, output_length, "tls"));
     free(output);
 }
 
@@ -329,6 +345,39 @@ static void test_builds_format_specific_capability_query(void)
     assert(!info.has_document);
     assert(info.operation_attributes_valid);
     free(request);
+}
+
+static void test_rewrites_converted_document_format(void)
+{
+    uint8_t message[512] = {2, 0, 0, 2, 0, 0, 0, 78, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    length = add_attribute(message, length, 0x45, "printer-uri",
+                           "ipp://espresso.local/ipp/print");
+    length = add_attribute(message, length, 0x49, "document-format",
+                           "image/pwg-raster");
+    message[length++] = 3;
+    static const uint8_t document[] = {0xde, 0xad, 0xbe, 0xef};
+    memcpy(message + length, document, sizeof(document));
+    length += sizeof(document);
+
+    printer_target_t target = {0};
+    strcpy(target.pdl, "image/urf");
+    uint8_t *output = NULL;
+    size_t output_length = 0;
+    size_t attributes_length = 0;
+    assert(ipp_codec_rewrite_request_for_format_diagnostic(
+               message, length, "ipp://legacy.local/ipp/print",
+               "ipp://legacy.local", &target, "image/urf", &output,
+               &output_length, &attributes_length, NULL, 0) == IPP_CODEC_OK);
+    assert(contains(output, attributes_length, "image/urf"));
+    assert(!contains(output, attributes_length, "image/pwg-raster"));
+    assert(output_length == attributes_length + sizeof(document));
+    assert(memcmp(output + attributes_length, document, sizeof(document)) == 0);
+    free(output);
 }
 
 static void test_detects_wrong_operation_attribute_order(void)
@@ -793,6 +842,7 @@ int main(void)
     test_normalizes_frontend_ipp_version();
     test_builds_cups_style_capability_query();
     test_builds_format_specific_capability_query();
+    test_rewrites_converted_document_format();
     test_inspects_print_job_document();
     test_inspects_multi_document_job_fields();
     test_detects_wrong_operation_attribute_order();

@@ -35,14 +35,16 @@ static void test_builds_truthful_airprint_record(void)
     size_t count = printer_advertisement_txt(
         &advertisement, items, ESPRESSO_DNSSD_TXT_MAX);
 
-    assert(count == ESPRESSO_DNSSD_TXT_MAX);
+    assert(count == ESPRESSO_DNSSD_TXT_BASE);
     assert(strcmp(ESPRESSO_DNSSD_SERVICE, "_ipp") == 0);
     assert(strcmp(ESPRESSO_DNSSD_PROTOCOL, "_tcp") == 0);
     assert(strcmp(ESPRESSO_DNSSD_SUBTYPE, "_universal") == 0);
+    assert(strcmp(ESPRESSO_DNSSD_PRINT_SUBTYPE, "_print") == 0);
     assert(strcmp(advertisement.instance,
                   "ESPresso - TestCo Legacy 500 (uuid)") == 0);
     assert(strcmp(value_for(items, count, "rp"), "ipp/print") == 0);
-    assert(strcmp(value_for(items, count, "pdl"), target.pdl) == 0);
+    assert(strcmp(value_for(items, count, "pdl"),
+                  "image/urf,application/pdf,image/pwg-raster") == 0);
     assert(strcmp(value_for(items, count, "URF"), target.urf) == 0);
     assert(strcmp(value_for(items, count, "Color"), "T") == 0);
     assert(strcmp(value_for(items, count, "Duplex"), "F") == 0);
@@ -53,6 +55,35 @@ static void test_builds_truthful_airprint_record(void)
     assert(strcmp(value_for(items, count, "note"), "Studio") == 0);
     assert(strcmp(value_for(items, count, "adminurl"),
                   "http://espresso.local/") == 0);
+
+    size_t secure_count = printer_advertisement_ipps_txt(
+        &advertisement, items, ESPRESSO_DNSSD_TXT_MAX);
+    assert(secure_count == ESPRESSO_DNSSD_TXT_MAX);
+    assert(strcmp(value_for(items, secure_count, "TLS"), "1.2") == 0);
+    assert(!advertisement.ipp_everywhere);
+}
+
+static void test_claims_everywhere_only_for_a_complete_target(void)
+{
+    printer_target_t target = {0};
+    strcpy(target.pdl, "image/urf,image/jpeg,application/pdf");
+    target.color = true;
+    target.ipp_everywhere = true;
+    target.page_ranges_supported = true;
+    target.overrides_document_number = true;
+    target.overrides_pages = true;
+    target.operations_supported =
+        (1ULL << 2) | (1ULL << 4) | (1ULL << 5) | (1ULL << 6) |
+        (1ULL << 8) | (1ULL << 9) | (1ULL << 10) | (1ULL << 11) |
+        (1ULL << 57) | (1ULL << 59) | (1ULL << 60);
+    printer_advertisement_t advertisement;
+    printer_advertisement_build(&target, "bridge-test-uuid", NULL,
+                                &advertisement);
+    assert(advertisement.ipp_everywhere);
+    target.overrides_pages = false;
+    printer_advertisement_build(&target, "bridge-test-uuid", NULL,
+                                &advertisement);
+    assert(!advertisement.ipp_everywhere);
 }
 
 static void test_bridge_identity_avoids_service_name_collisions(void)
@@ -86,7 +117,17 @@ static void test_uses_conservative_defaults(void)
     assert(strcmp(value_for(items, count, "printer-state"), "3") == 0);
     assert(strcmp(value_for(items, count, "note"),
                   "Legacy printer bridged by ESPresso") == 0);
-    assert(strstr(value_for(items, count, "pdl"), "image/pwg-raster") == NULL);
+    assert(strstr(value_for(items, count, "pdl"), "image/pwg-raster") != NULL);
+}
+
+static void test_does_not_advertise_pwg_without_urf_conversion_target(void)
+{
+    printer_target_t target = {0};
+    snprintf(target.pdl, sizeof(target.pdl), "application/pdf");
+    printer_advertisement_t advertisement;
+    printer_advertisement_build(&target, "bridge-test-uuid", NULL,
+                                &advertisement);
+    assert(strcmp(advertisement.pdl, "application/pdf") == 0);
 }
 
 static void test_custom_name_replaces_generated_service_name(void)
@@ -104,6 +145,8 @@ int main(void)
 {
     test_builds_truthful_airprint_record();
     test_uses_conservative_defaults();
+    test_does_not_advertise_pwg_without_urf_conversion_target();
+    test_claims_everywhere_only_for_a_complete_target();
     test_bridge_identity_avoids_service_name_collisions();
     test_custom_name_replaces_generated_service_name();
     puts("DNS-SD advertisement tests passed");

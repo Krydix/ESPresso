@@ -1,0 +1,37 @@
+{
+  "name": "TestCo Everywhere 3000",
+  "dns": {
+    "pdl": "image/urf,image/jpeg,application/pdf",
+    "urf": "W8,SRGB24,RS300-600",
+    "media": "iso_a4_210x297mm,na_letter_8.5x11in"
+  },
+  "ipp": {
+    "version": "2.0",
+    "pdl": ["image/urf", "image/jpeg", "application/pdf"],
+    "urf": ["W8", "SRGB24", "RS300-600"],
+    "media": ["iso_a4_210x297mm", "na_letter_8.5x11in"],
+    "mediaDefault": "iso_a4_210x297mm",
+    "color": true,
+    "duplex": true,
+    "copies": 99,
+    "operations": [2, 4, 5, 6, 8, 9, 10, 11, 57, 59, 60],
+    "state": 3,
+    "accepting": true,
+    "ippEverywhere": true
+  },
+  "relayExact": [
+    "document-format-supported",
+    "urf-supported",
+    "media-supported",
+    "sides-supported",
+    "printer-state",
+    "printer-is-accepting-jobs"
+  ],
+  "expected": {
+    "ipp-versions-supported": ["1.1", "2.0"],
+    "operations-supported": [2, 4, 5, 6, 8, 9, 10, 11, 57, 59, 60],
+    "uri-security-supported": "none",
+    "document-format-default": "application/pdf",
+    "color-supported": true
+  }
+}

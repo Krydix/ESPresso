@@ -12,9 +12,16 @@ typedef enum {
     IPP_PROXY_LOCAL_STATUS,
 } ipp_proxy_action_t;
 
+typedef enum {
+    IPP_PROXY_DOCUMENT_PASSTHROUGH = 0,
+    IPP_PROXY_DOCUMENT_PWG_TO_URF,
+} ipp_proxy_document_transform_t;
+
 typedef struct {
     ipp_proxy_action_t action;
     bool document_operation;
+    ipp_proxy_document_transform_t document_transform;
+    const char *upstream_document_format;
     uint8_t response_major;
     uint8_t response_minor;
     uint8_t upstream_major;

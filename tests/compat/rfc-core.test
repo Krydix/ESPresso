@@ -70,7 +70,7 @@ DEFINE IPP_URI_SCHEME "/^ipps?://.+$$/"
   ATTR charset attributes-charset utf-8
   ATTR naturalLanguage attributes-natural-language en
   ATTR uri printer-uri $uri
-  ATTR mimeMediaType document-format image/pwg-raster
+  ATTR mimeMediaType document-format application/postscript
   STATUS client-error-document-format-not-supported
 }
 {

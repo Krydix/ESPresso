@@ -86,15 +86,28 @@ esp_err_t app_state_init(void)
     esp_err_t name_err = nvs_get_str(nvs, "printer_name", s_printer_name,
                                      &name_size);
 
-    /* Schema 5 only appends admin_url. Preserve schema-4 selections across
-     * OTA and leave the new field empty until the next capability refresh. */
+    /* Schemas 4 through 6 only appended fields. Preserve older selections across
+     * OTA and default their new fields until the next capability refresh. */
     const size_t alignment = _Alignof(printer_target_t);
-    const size_t legacy_size =
+    const size_t schema4_size =
         (offsetof(printer_target_t, admin_url) + alignment - 1) & ~(alignment - 1);
-    bool migrated_target = target_err == ESP_OK && size == legacy_size &&
-                           s_target.profile_schema == 4;
+    const size_t schema5_size =
+        (offsetof(printer_target_t, secure_transport) + alignment - 1) &
+        ~(alignment - 1);
+    const size_t schema6_size =
+        (offsetof(printer_target_t, page_ranges_supported) + alignment - 1) &
+        ~(alignment - 1);
+    bool migrated_target = target_err == ESP_OK &&
+                           ((size == schema4_size &&
+                             s_target.profile_schema == 4) ||
+                            (size == schema5_size &&
+                             s_target.profile_schema == 5) ||
+                            (size == schema6_size &&
+                             s_target.profile_schema == 6));
     if (migrated_target) {
-        memset(s_target.admin_url, 0, sizeof(s_target.admin_url));
+        if (s_target.profile_schema == 4) {
+            memset(s_target.admin_url, 0, sizeof(s_target.admin_url));
+        }
         s_target.profile_schema = ESPRESSO_PROFILE_SCHEMA;
         target_err = nvs_set_blob(nvs, "printer", &s_target, sizeof(s_target));
         if (target_err == ESP_OK) {
@@ -102,7 +115,8 @@ esp_err_t app_state_init(void)
         }
         if (target_err == ESP_OK) {
             size = sizeof(s_target);
-            ESP_LOGI(TAG, "migrated persisted printer profile from schema 4");
+            ESP_LOGI(TAG, "migrated persisted printer profile to schema %u",
+                     (unsigned)ESPRESSO_PROFILE_SCHEMA);
         }
     }
     nvs_close(nvs);

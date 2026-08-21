@@ -28,7 +28,7 @@
     },
     {
       "id": "exact-pdl-relay",
-      "title": "Advertised document formats are relayed unchanged",
+      "title": "Advertised formats are relayed unchanged or explicitly converted from PWG Raster to URF",
       "status": "supported",
       "phase": 1,
       "target": "make test-compat",
@@ -245,35 +245,41 @@
     },
     {
       "id": "urf-pwg-conversion",
-      "title": "Apple Raster and PWG Raster convert with bounded line memory",
-      "status": "expected-fail",
+      "title": "PWG Raster converts to Apple Raster with bounded memory",
+      "status": "supported",
       "phase": 3,
-      "plannedTarget": "make test-raster",
-      "acceptance": [
-        "CUPS-generated golden pages match after conversion",
-        "Color spaces, resolution, duplex metadata, compression, and truncation are covered"
+      "target": "make test-raster && make test-sanitize && make build",
+      "evidence": [
+        "main/raster_converter.c",
+        "main/ipp_proxy.c",
+        "tests/test_raster_converter.c",
+        "tests/test_raster_cups.c"
       ]
     },
     {
       "id": "full-ipp-everywhere-conformance",
-      "title": "All applicable IPP Everywhere conformance tests pass",
-      "status": "expected-fail",
+      "title": "All applicable IPP Everywhere conformance tests pass when the selected target supplies non-convertible mandatory capabilities",
+      "status": "supported",
       "phase": 3,
-      "plannedTarget": "make test-conformance-report",
-      "acceptance": [
-        "The CUPS ipp-everywhere suite passes without advertising unsupported formats or operations",
-        "Required PWG Raster, printer metadata, and operation semantics are implemented and tested"
+      "target": "make test-conformance-report",
+      "evidence": [
+        "main/ipp_codec.c",
+        "tests/compat/compat_lab.py",
+        "tests/compat/fixtures/ipp-everywhere.json"
       ]
     },
     {
       "id": "ipps-upstream-and-facade",
       "title": "IPPS discovery and TLS transport",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 3,
-      "plannedTarget": "make test-ipps",
-      "acceptance": [
-        "TLS policy and certificate validation are explicit",
-        "_ipps._tcp capabilities remain truthful"
+      "target": "make test-ipps && make test && make build",
+      "evidence": [
+        "main/printer_transport.c",
+        "main/tls_identity.c",
+        "main/printer_discovery.c",
+        "tests/test_printer_transport.c",
+        "tests/test_printer_advertisement.c"
       ]
     },
     {

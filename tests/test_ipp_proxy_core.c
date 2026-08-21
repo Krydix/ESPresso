@@ -131,13 +131,20 @@ static void test_rejects_unconvertible_formats_and_atomic_job_pairs(void)
     ipp_request_info_t request = valid_request(IPP_OPERATION_VALIDATE_JOB);
     snprintf(request.document_format, sizeof(request.document_format),
              "image/pwg-raster");
+    ipp_proxy_plan_t plan;
+    ipp_proxy_plan_request(&request, &target, request.attributes_length, &plan);
+    assert(plan.action == IPP_PROXY_RELAY);
+    assert(plan.document_transform == IPP_PROXY_DOCUMENT_PWG_TO_URF);
+    assert(strcmp(plan.upstream_document_format, "image/urf") == 0);
+
+    snprintf(request.document_format, sizeof(request.document_format),
+             "image/jpeg");
     assert_status(request, target, request.attributes_length,
                   IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED);
 
     request = valid_request(IPP_OPERATION_GET_PRINTER_ATTRIBUTES);
     snprintf(request.document_format, sizeof(request.document_format),
              "application/octet-stream");
-    ipp_proxy_plan_t plan;
     ipp_proxy_plan_request(&request, &target, request.attributes_length, &plan);
     assert(plan.action == IPP_PROXY_RELAY);
 

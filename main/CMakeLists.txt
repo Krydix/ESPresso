@@ -16,6 +16,9 @@ idf_component_register(
         "printer_advertisement.c"
         "printer_discovery.c"
         "printer_identity.c"
+        "printer_transport.c"
+        "raster_converter.c"
+        "tls_identity.c"
         "web_server.c"
         "wifi_manager.c"
     INCLUDE_DIRS "."
@@ -23,6 +26,7 @@ idf_component_register(
         app_update
         esp_event
         esp_app_format
+        esp-tls
         esp_http_client
         esp_http_server
         esp_https_ota

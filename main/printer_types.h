@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ESPRESSO_PROFILE_SCHEMA 5
+#define ESPRESSO_PROFILE_SCHEMA 7
 #define ESPRESSO_INSTANCE_MAX 64
 #define ESPRESSO_HOST_MAX 64
 #define ESPRESSO_ADDRESS_MAX 48
@@ -67,4 +67,9 @@ typedef struct {
     bool collate;
     bool legacy_output_mode;
     char admin_url[ESPRESSO_ADMIN_URL_MAX];
+    bool secure_transport;
+    bool page_ranges_supported;
+    bool overrides_document_number;
+    bool overrides_pages;
+    bool ipp_everywhere;
 } printer_target_t;

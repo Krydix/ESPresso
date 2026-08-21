@@ -64,9 +64,10 @@
         <div class="row stacked"><span class="label">Choose an AirPrint Printer</span><span class="detail" id="printerCopy">Discovery starts after Wi‑Fi is connected.</span><div class="controls"><button class="button secondary" id="scanPrinters">Find Printers</button></div><div class="printer-list" id="printerList"></div><div id="printerMessage"></div></div>
         <div class="row stacked hidden" id="printerNameRow"><span class="label">AirPrint Name</span><span class="detail" id="printerNameCopy">Choose the name shown on iPhone, iPad, and Mac.</span><form class="form" id="printerNameForm"><input class="field" id="printerName" type="text" maxlength="63" placeholder="Printer name" aria-label="AirPrint printer name" autocomplete="off" required><div class="controls"><button class="button" type="submit">Save Name</button><button class="button secondary hidden" id="resetPrinterName" type="button">Use Default</button></div></form><div id="printerNameMessage"></div></div>
         <div class="row hidden" id="printerWebsiteRow"><span class="row-copy"><span class="label">Printer Website</span><span class="detail">Open the selected printer’s own settings page.</span></span><a class="row-link" id="printerWebsite" target="_blank" rel="noopener noreferrer">Open</a></div>
+        <div class="row"><span class="row-copy"><span class="label">Secure Printing Certificate</span><span class="detail">Install this persistent certificate only on devices you trust if they require explicit IPPS trust.</span></span><a class="row-link" href="/api/tls-certificate" download="espresso-local.pem">Download</a></div>
         <div class="row"><span class="row-copy"><span class="label">Compatibility</span><span class="detail" id="capabilityNote">Waiting for a printer selection.</span></span></div>
       </div>
-      <p class="note">ESPresso relays compatible AirPrint raster data unchanged. It doesn’t render documents or add printer languages.</p>
+      <p class="note">ESPresso relays compatible AirPrint formats and converts PWG Raster to legacy Apple Raster when needed. It doesn’t render arbitrary documents or add vendor drivers.</p>
     </section>
 
     <section class="section" aria-labelledby="updateHeading">

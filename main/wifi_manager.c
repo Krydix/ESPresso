@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 
 #include <string.h>
+#include <time.h>
 
 #include "app_state.h"
 #include "dns_server.h"
@@ -8,6 +9,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -28,6 +30,20 @@ static dns_server_handle_t s_dns;
 static void printer_network_ready_task(void *context)
 {
     (void)context;
+    if (time(NULL) < 1704067200) {
+        esp_sntp_config_t config =
+            ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        esp_err_t err = esp_netif_sntp_init(&config);
+        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+            for (int attempt = 0;
+                 attempt < 5 && time(NULL) < 1704067200; ++attempt) {
+                esp_netif_sntp_sync_wait(pdMS_TO_TICKS(2000));
+            }
+        }
+        if (time(NULL) < 1704067200) {
+            ESP_LOGW(TAG, "clock is not synchronized; IPPS certificate checks may fail");
+        }
+    }
     printer_discovery_network_ready();
     vTaskDelete(NULL);
 }

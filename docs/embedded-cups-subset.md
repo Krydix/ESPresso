@@ -8,17 +8,18 @@ using ESP-IDF for the actual network transport.
 
 | Upstream behavior | ESPresso implementation |
 | --- | --- |
-| Browse and resolve an IPP DNS-SD service | ESP-IDF mDNS `_ipp._tcp` PTR query, SRV/TXT/address result |
+| Browse and resolve an IPP DNS-SD service | ESP-IDF mDNS `_ipp._tcp` and `_ipps._tcp` PTR queries, SRV/TXT/address result |
 | Read `rp`, `pdl`, `URF`, `ty`, `UUID`, feature flags | Compact `printer_target_t` profile |
 | Query `all,media-col-database` with IPP 2.0 | Bounded HTTP/IPP discovery request |
 | Fall back to IPP 1.1 `all` for old firmware | Automatic second discovery request |
 | Query capabilities in a document-format context | Bounded per-format probes, URF first |
 | Re-resolve a saved DNS-SD hostname after reboot | ESP-IDF mDNS A query before advertisement |
 | Derive formats, URF, media, color, duplex, copies and operations | Allocation-bounded IPP parser |
-| Advertise `_ipp._tcp,_universal` using real capabilities | ESP-IDF mDNS service and TXT record |
+| Advertise AirPrint and IPP Everywhere services | `_ipp._tcp`/`_ipps._tcp`, `_universal`/`_print`, and truthful TXT records |
 | Present a modern queue identity | ESP-specific UUID, URI and IPP 1.1/2.0 facade |
 | Relay printer and job operations | Safe operation allowlist, validation, IPP errors, and version/URI translation |
-| Relay document data | Unchanged 4 KiB streaming path with host-tested Content-Length and chunked framing plus short-I/O handling |
+| Relay document data | 4 KiB pass-through or compressed-row PWG Raster → URF conversion with bounded HTTP framing |
+| Secure transport | Persistent device IPPS identity plus CA- and hostname-verified secure upstream transport |
 | Track live state | Refresh state and accepting-jobs metadata from capability responses |
 
 Request policy, streaming, and DNS-SD TXT generation are platform-neutral C modules.
@@ -67,8 +68,8 @@ For successful `Get-Printer-Attributes` responses ESPresso can safely own and no
 - `ipp-versions-supported`: `1.1`, `2.0`;
 - `printer-uri-supported` and printer/job URIs pointing at ESPresso;
 - `printer-uuid`, using the bridge identity rather than the physical printer UUID;
-- `uri-authentication-supported=none` and `uri-security-supported=none`, matching the
-  current local endpoint;
+- `uri-authentication-supported=none` and endpoint-specific
+  `uri-security-supported=none|tls`;
 - missing names and make/model text;
 - missing formats, URF modes, media names, color, sides, copies and operations only when
   they were learned from the target profile;
@@ -107,16 +108,17 @@ ESPresso does not fabricate it.
 
 These CUPS components are deliberately outside the embedded target:
 
-- rasterization or conversion between PDF, Apple Raster, PWG Raster, PCL or PostScript;
+- rasterization or conversion between PDF/JPEG, PCL or PostScript (PWG Raster to
+  Apple Raster header conversion is included);
 - Ghostscript, MuPDF, Poppler, cups-filters and printer-specific filters;
 - PPD parsing/generation and legacy printer drivers;
 - the complete CUPS media-name/PPD database (self-describing PWG names need no table);
 - local spooling, accounting, subscriptions, job history or persistent document storage;
-- IPPS in the current firmware;
 - USB, parallel, proprietary backend and Printer Application support.
 
-The compatibility rule is simple: ESPresso may advertise and relay a document format
-only when the physical printer already reports that it accepts that exact format.
+The compatibility rule is simple: ESPresso advertises a format only when the physical
+printer accepts it directly, except for `image/pwg-raster`, which is advertised when
+the target accepts `image/urf` and converted by the tested bounded raster path.
 
 ## Upstream reference paths
 

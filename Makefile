@@ -25,7 +25,7 @@ define run_idf
 			-D SDKCONFIG="$(SDKCONFIG)" $(1)'
 endef
 
-.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-cups test-compat test-hardware-ios test-sanitize test-fuzz-smoke test-roadmap test-conformance-report web-installer web-installer-all
+.PHONY: help build reconfigure clean fullclean flash monitor flash-monitor size test test-raster test-ipps test-cups test-compat test-hardware-ios test-sanitize test-fuzz-smoke test-roadmap test-conformance-report web-installer web-installer-all
 
 help:
 	@printf '%s\n' \
@@ -35,13 +35,15 @@ help:
 		'  make monitor PORT=/dev/... Open the serial monitor' \
 		'  make flash-monitor PORT=... Build, flash, and monitor' \
 		'  make test                  Run host-side IPP codec tests' \
+		'  make test-raster           Validate bounded PWG Raster to URF conversion' \
+		'  make test-ipps             Validate authenticated IPPS transport policy' \
 		'  make test-cups             Validate normalized IPP with CUPS ipptool' \
 		'  make test-compat           Run the CUPS differential compatibility lab' \
 		'  make test-hardware-ios ESPRESSO_URI=ipp://...  Replay the captured iOS flow through an ESP' \
 		'  make test-sanitize         Run codec tests with ASan and UBSan' \
 		'  make test-fuzz-smoke       Run the coverage-guided IPP codec fuzz gate' \
 		'  make test-roadmap          Validate and report the feature test matrix' \
-		'  make test-conformance-report  Record expected-red full CUPS suites' \
+		'  make test-conformance-report  Run the full CUPS conformance suites' \
 		'  make web-installer         Stage a flasher for TARGET' \
 		'  make web-installer-all     Stage the auto-detecting three-target flasher' \
 		'  make size                  Show firmware size information'
@@ -73,7 +75,7 @@ flash-monitor:
 size:
 	$(call run_idf,size)
 
-test:
+test: test-raster test-ipps
 	@mkdir -p "$(BUILD_DIR)/host-tests"
 	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
 		-I"$(ROOT_DIR)/main" \
@@ -129,6 +131,32 @@ test:
 test-cups:
 	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }
 	@sh scripts/test_cups_oracle.sh
+
+test-raster:
+	@command -v cups-config >/dev/null || { echo "cups-config is required"; exit 1; }
+	@mkdir -p "$(BUILD_DIR)/host-tests"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/raster_converter.c" \
+		"$(ROOT_DIR)/tests/test_raster_converter.c" \
+		-o "$(BUILD_DIR)/host-tests/test_raster_converter"
+	@"$(BUILD_DIR)/host-tests/test_raster_converter"
+	@$(CC) -std=c11 -Wall -Wextra -Werror \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/raster_converter.c" \
+		"$(ROOT_DIR)/tests/test_raster_cups.c" \
+		$$(cups-config --cflags --libs) \
+		-o "$(BUILD_DIR)/host-tests/test_raster_cups"
+	@"$(BUILD_DIR)/host-tests/test_raster_cups"
+
+test-ipps:
+	@mkdir -p "$(BUILD_DIR)/host-tests"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/printer_transport.c" \
+		"$(ROOT_DIR)/tests/test_printer_transport.c" \
+		-o "$(BUILD_DIR)/host-tests/test_printer_transport"
+	@"$(BUILD_DIR)/host-tests/test_printer_transport"
 
 test-compat:
 	@command -v ipptool >/dev/null || { echo "ipptool is required"; exit 1; }
@@ -210,6 +238,13 @@ test-sanitize:
 		"$(ROOT_DIR)/tests/test_ipp_fuzz_smoke.c" \
 		-o "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke_sanitize"
 	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_ipp_fuzz_smoke_sanitize"
+	@$(CC) -std=c11 -Wall -Wextra -Werror -pedantic \
+		-fsanitize=address,undefined -fno-omit-frame-pointer \
+		-I"$(ROOT_DIR)/main" \
+		"$(ROOT_DIR)/main/raster_converter.c" \
+		"$(ROOT_DIR)/tests/test_raster_converter.c" \
+		-o "$(BUILD_DIR)/host-tests/test_raster_converter_sanitize"
+	@ASAN_OPTIONS=detect_leaks=0 "$(BUILD_DIR)/host-tests/test_raster_converter_sanitize"
 
 test-fuzz-smoke:
 	@command -v clang >/dev/null || { echo "clang is required"; exit 1; }
@@ -259,6 +294,7 @@ test-conformance-report:
 		--root "$(ROOT_DIR)" \
 		--library "$(BUILD_DIR)/host-tests/libespresso_compat.so" \
 		--conformance-report "$(BUILD_DIR)/host-tests/conformance-roadmap.json" \
+		--conformance-fixture "$(ROOT_DIR)/tests/compat/fixtures/ipp-everywhere.json" \
 		"$(ROOT_DIR)/tests/compat/fixtures/basic-airprint.json"
 
 web-installer:

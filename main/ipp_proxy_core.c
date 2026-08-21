@@ -17,6 +17,7 @@ void ipp_proxy_plan_request(const ipp_request_info_t *request,
 {
     memset(plan, 0, sizeof(*plan));
     plan->action = IPP_PROXY_RELAY;
+    plan->document_transform = IPP_PROXY_DOCUMENT_PASSTHROUGH;
     plan->response_major = request->major;
     plan->response_minor = request->minor;
     plan->upstream_major = target->capability_queried &&
@@ -29,6 +30,11 @@ void ipp_proxy_plan_request(const ipp_request_info_t *request,
     plan->document_operation =
         request->operation_id == IPP_OPERATION_PRINT_JOB ||
         request->operation_id == IPP_OPERATION_SEND_DOCUMENT;
+    if (strcasecmp(request->document_format, "image/pwg-raster") == 0 &&
+        ipp_codec_format_supported(target, "image/urf")) {
+        plan->document_transform = IPP_PROXY_DOCUMENT_PWG_TO_URF;
+        plan->upstream_document_format = "image/urf";
+    }
 
     if (!((request->major == 1 && request->minor == 1) ||
           (request->major == 2 && request->minor == 0))) {
@@ -83,8 +89,10 @@ void ipp_proxy_plan_request(const ipp_request_info_t *request,
         request->operation_id == IPP_OPERATION_SEND_DOCUMENT;
     if (format_must_be_relayable && request->document_format[0] &&
         !ipp_codec_format_supported(target, request->document_format)) {
-        reject(plan, IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED,
-               "Document format is not accepted unchanged by the selected printer");
+        if (plan->document_transform != IPP_PROXY_DOCUMENT_PWG_TO_URF) {
+            reject(plan, IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED,
+                   "Document format cannot be relayed to the selected printer");
+        }
     }
 }
 

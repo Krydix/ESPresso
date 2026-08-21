@@ -436,6 +436,17 @@ class LabState:
                 attrs.append(ipp_attr(0x41, "printer-location", spec["location"]))
             if spec.get("moreInfo"):
                 attrs.append(ipp_attr(0x45, "printer-more-info", spec["moreInfo"]))
+            if spec.get("ippEverywhere"):
+                attrs.append(ipp_attr(0x44, "identify-actions-default",
+                                      "display"))
+                attrs.append(ipp_attr(0x44, "identify-actions-supported",
+                                      "display"))
+                attrs.append(ipp_attr(0x44, "ipp-features-supported",
+                                      "ipp-everywhere"))
+                attrs.append(ipp_attr(0x44, "overrides-supported",
+                                      "document-number"))
+                attrs.append(ipp_attr(0x44, None, "pages"))
+                attrs.append(ipp_attr(0x22, "page-ranges-supported", b"\x01"))
             return ipp_response(legacy_version, 0, info.request_id,
                                 operation_attributes(), [(0x04, attrs)])
 
@@ -754,6 +765,16 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
             raw = flatten_response(raw_plist)
             facade = flatten_response(facade_plist)
             for attribute in fixture.get("relayExact", []):
+                if attribute == "document-format-supported" and \
+                        "image/urf" in (raw.get(attribute) or []):
+                    expected_formats = set(raw.get(attribute) or [])
+                    expected_formats.add("image/pwg-raster")
+                    if set(facade.get(attribute) or []) != expected_formats:
+                        raise AssertionError(
+                            f"{fixture_path.stem}: {attribute} differs after "
+                            f"PWG conversion: legacy={raw.get(attribute)!r}, "
+                            f"facade={facade.get(attribute)!r}")
+                    continue
                 if canonical(raw.get(attribute)) != canonical(facade.get(attribute)):
                     raise AssertionError(
                         f"{fixture_path.stem}: {attribute} differs: "
@@ -938,6 +959,7 @@ def main():
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--conformance-report", type=Path)
+    parser.add_argument("--conformance-fixture", type=Path)
     parser.add_argument("fixtures", nargs="+", type=Path)
     args = parser.parse_args()
     for fixture in args.fixtures:
@@ -945,7 +967,8 @@ def main():
     print(f"Compatibility lab: {len(args.fixtures)} fixture(s) passed")
     if args.conformance_report:
         write_conformance_report(
-            args.root.resolve(), args.library.resolve(), args.fixtures[0].resolve(),
+            args.root.resolve(), args.library.resolve(),
+            (args.conformance_fixture or args.fixtures[0]).resolve(),
             args.conformance_report.resolve())
 
 

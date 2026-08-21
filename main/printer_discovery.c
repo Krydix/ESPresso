@@ -21,6 +21,8 @@ static printer_target_t s_printers[ESPRESSO_PRINTER_MAX];
 static size_t s_printer_count;
 static bool s_mdns_ready;
 static bool s_ipp_advertised;
+static bool s_ipps_advertised;
+static bool s_everywhere_advertised;
 static char s_service_instance[64];
 static printer_advertisement_t s_advertisement;
 /* Schema-4 profiles and their DNS-SD projection do not fit together on the
@@ -128,10 +130,12 @@ static void refresh_saved_address(void)
     }
 }
 
-static void target_from_result(const mdns_result_t *result, printer_target_t *target)
+static void target_from_result(const mdns_result_t *result, bool secure,
+                               printer_target_t *target)
 {
     memset(target, 0, sizeof(*target));
     target->profile_schema = ESPRESSO_PROFILE_SCHEMA;
+    target->secure_transport = secure;
     snprintf(target->instance, sizeof(target->instance), "%s",
              result->instance_name ? result->instance_name : "IPP printer");
     snprintf(target->hostname, sizeof(target->hostname), "%s",
@@ -195,6 +199,52 @@ static void target_from_result(const mdns_result_t *result, printer_target_t *ta
     ipp_codec_finalize_profile(target);
 }
 
+static void collect_results(mdns_result_t *results, bool secure,
+                            printer_target_t *found, size_t *count)
+{
+    for (mdns_result_t *result = results;
+         result && *count < ESPRESSO_PRINTER_MAX; result = result->next) {
+        if (result->hostname && strcasecmp(result->hostname, "espresso") == 0) {
+            continue;
+        }
+        printer_target_t target;
+        target_from_result(result, secure, &target);
+        esp_err_t probe_err = printer_capabilities_probe(&target);
+        if (probe_err != ESP_OK) {
+            ESP_LOGW(TAG, "using DNS-SD-only capabilities for %s",
+                     target.instance);
+        }
+        if (target.pdl[0] == '\0' && target.urf[0] != '\0') {
+            snprintf(target.pdl, sizeof(target.pdl), "image/urf");
+        }
+        if (target.address[0] == '\0' || target.port == 0 ||
+            !strstr(target.pdl, "image/urf") || target.urf[0] == '\0') {
+            continue;
+        }
+        bool duplicate = false;
+        for (size_t i = 0; i < *count; ++i) {
+            bool same_service =
+                target.hostname[0] && found[i].hostname[0] &&
+                strcasecmp(found[i].hostname, target.hostname) == 0 &&
+                strcmp(found[i].resource_path, target.resource_path) == 0;
+            bool same_endpoint =
+                strcmp(found[i].address, target.address) == 0 &&
+                found[i].port == target.port &&
+                strcmp(found[i].resource_path, target.resource_path) == 0;
+            if (same_service || same_endpoint) {
+                if (secure && !found[i].secure_transport) {
+                    found[i] = target;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            found[(*count)++] = target;
+        }
+    }
+}
+
 esp_err_t printer_discovery_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -222,52 +272,29 @@ esp_err_t printer_discovery_scan(void)
     if (!s_mdns_ready) {
         return ESP_ERR_INVALID_STATE;
     }
-    mdns_result_t *results = NULL;
-    esp_err_t err = mdns_query_ptr("_ipp", "_tcp", 4000, ESPRESSO_PRINTER_MAX + 2,
-                                   &results);
-    if (err != ESP_OK) {
-        return err;
+    mdns_result_t *ipp_results = NULL;
+    mdns_result_t *ipps_results = NULL;
+    esp_err_t ipp_err = mdns_query_ptr("_ipp", "_tcp", 4000,
+                                       ESPRESSO_PRINTER_MAX + 2,
+                                       &ipp_results);
+    esp_err_t ipps_err = mdns_query_ptr("_ipps", "_tcp", 4000,
+                                        ESPRESSO_PRINTER_MAX + 2,
+                                        &ipps_results);
+    if (ipp_err != ESP_OK && ipps_err != ESP_OK) {
+        return ipp_err;
     }
 
     printer_target_t *found = calloc(ESPRESSO_PRINTER_MAX, sizeof(*found));
     if (!found) {
-        mdns_query_results_free(results);
+        mdns_query_results_free(ipp_results);
+        mdns_query_results_free(ipps_results);
         return ESP_ERR_NO_MEM;
     }
     size_t count = 0;
-    for (mdns_result_t *result = results; result && count < ESPRESSO_PRINTER_MAX;
-         result = result->next) {
-        if (result->hostname && strcasecmp(result->hostname, "espresso") == 0) {
-            continue;
-        }
-        printer_target_t target;
-        target_from_result(result, &target);
-        /* CUPS resolves DNS-SD first, then treats IPP as the capability source. */
-        esp_err_t probe_err = printer_capabilities_probe(&target);
-        if (probe_err != ESP_OK) {
-            ESP_LOGW(TAG, "using DNS-SD-only capabilities for %s", target.instance);
-        }
-        if (target.pdl[0] == '\0' && target.urf[0] != '\0') {
-            snprintf(target.pdl, sizeof(target.pdl), "image/urf");
-        }
-        if (target.address[0] == '\0' || target.port == 0 ||
-            !strstr(target.pdl, "image/urf") || target.urf[0] == '\0') {
-            continue;
-        }
-        bool duplicate = false;
-        for (size_t i = 0; i < count; ++i) {
-            if (strcmp(found[i].address, target.address) == 0 &&
-                found[i].port == target.port &&
-                strcmp(found[i].resource_path, target.resource_path) == 0) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (!duplicate) {
-            found[count++] = target;
-        }
-    }
-    mdns_query_results_free(results);
+    collect_results(ipp_results, false, found, &count);
+    collect_results(ipps_results, true, found, &count);
+    mdns_query_results_free(ipp_results);
+    mdns_query_results_free(ipps_results);
 
     /* A scan also refreshes the persisted profile for the selected endpoint.
      * This keeps the selection stable while picking up newly advertised
@@ -352,6 +379,16 @@ esp_err_t printer_discovery_clear_selection(void)
             err = ESP_OK;
         }
     }
+    if (s_ipps_advertised) {
+        esp_err_t secure_err = mdns_service_remove(
+            ESPRESSO_DNSSD_SECURE_SERVICE, ESPRESSO_DNSSD_PROTOCOL);
+        if (secure_err == ESP_OK || secure_err == ESP_ERR_NOT_FOUND) {
+            s_ipps_advertised = false;
+            s_everywhere_advertised = false;
+        } else if (err == ESP_OK) {
+            err = secure_err;
+        }
+    }
     xSemaphoreGive(s_lock);
     return err;
 }
@@ -382,7 +419,7 @@ static esp_err_t advertise_selected_locked(void)
      * then printer_discovery_network_ready() refreshes it. Avoid removing and
      * immediately re-adding an unchanged service: doing that while mDNS has
      * scheduled answers can corrupt the component's service-answer queue. */
-    if (s_ipp_advertised &&
+    if (s_ipp_advertised && s_ipps_advertised &&
         memcmp(&s_advertisement, &s_pending_advertisement,
                sizeof(s_pending_advertisement)) == 0) {
         ESP_LOGI(TAG, "AirPrint facade already advertised for %s",
@@ -395,13 +432,52 @@ static esp_err_t advertise_selected_locked(void)
             ESP_RETURN_ON_ERROR(mdns_service_instance_name_set(
                                     ESPRESSO_DNSSD_SERVICE,
                                     ESPRESSO_DNSSD_PROTOCOL,
-                                    s_pending_advertisement.instance),
+                                s_pending_advertisement.instance),
                                 TAG, "IPP instance update failed");
+            ESP_RETURN_ON_ERROR(mdns_service_instance_name_set(
+                                    ESPRESSO_DNSSD_SECURE_SERVICE,
+                                    ESPRESSO_DNSSD_PROTOCOL,
+                                    s_pending_advertisement.instance),
+                                TAG, "IPPS instance update failed");
         }
         ESP_RETURN_ON_ERROR(mdns_service_txt_set(ESPRESSO_DNSSD_SERVICE,
                                                  ESPRESSO_DNSSD_PROTOCOL,
                                                  s_mdns_txt, txt_count),
                             TAG, "IPP TXT update failed");
+        size_t secure_count = printer_advertisement_ipps_txt(
+            &s_pending_advertisement, s_generic_txt, ESPRESSO_DNSSD_TXT_MAX);
+        for (size_t i = 0; i < secure_count; ++i) {
+            s_mdns_txt[i].key = s_generic_txt[i].key;
+            s_mdns_txt[i].value = s_generic_txt[i].value;
+        }
+        ESP_RETURN_ON_ERROR(mdns_service_txt_set(
+                                ESPRESSO_DNSSD_SECURE_SERVICE,
+                                ESPRESSO_DNSSD_PROTOCOL, s_mdns_txt,
+                                secure_count),
+                            TAG, "IPPS TXT update failed");
+        if (s_everywhere_advertised !=
+            s_pending_advertisement.ipp_everywhere) {
+            esp_err_t (*change_subtype)(const char *, const char *,
+                                        const char *, const char *,
+                                        const char *) =
+                s_pending_advertisement.ipp_everywhere ?
+                    mdns_service_subtype_add_for_host :
+                    mdns_service_subtype_remove_for_host;
+            ESP_RETURN_ON_ERROR(change_subtype(
+                                    s_pending_advertisement.instance,
+                                    ESPRESSO_DNSSD_SERVICE,
+                                    ESPRESSO_DNSSD_PROTOCOL, NULL,
+                                    ESPRESSO_DNSSD_PRINT_SUBTYPE),
+                                TAG, "IPP Everywhere subtype update failed");
+            ESP_RETURN_ON_ERROR(change_subtype(
+                                    s_pending_advertisement.instance,
+                                    ESPRESSO_DNSSD_SECURE_SERVICE,
+                                    ESPRESSO_DNSSD_PROTOCOL, NULL,
+                                    ESPRESSO_DNSSD_PRINT_SUBTYPE),
+                                TAG, "secure subtype update failed");
+            s_everywhere_advertised =
+                s_pending_advertisement.ipp_everywhere;
+        }
         s_advertisement = s_pending_advertisement;
         snprintf(s_service_instance, sizeof(s_service_instance), "%s",
                  s_pending_advertisement.instance);
@@ -422,8 +498,37 @@ static esp_err_t advertise_selected_locked(void)
                             ESPRESSO_DNSSD_PROTOCOL, NULL,
                             ESPRESSO_DNSSD_SUBTYPE),
                         TAG, "AirPrint subtype failed");
+    if (s_pending_advertisement.ipp_everywhere) {
+        ESP_RETURN_ON_ERROR(mdns_service_subtype_add_for_host(
+                                s_service_instance, ESPRESSO_DNSSD_SERVICE,
+                                ESPRESSO_DNSSD_PROTOCOL, NULL,
+                                ESPRESSO_DNSSD_PRINT_SUBTYPE),
+                            TAG, "IPP Everywhere subtype failed");
+    }
+    size_t secure_count = printer_advertisement_ipps_txt(
+        &s_pending_advertisement, s_generic_txt, ESPRESSO_DNSSD_TXT_MAX);
+    for (size_t i = 0; i < secure_count; ++i) {
+        s_mdns_txt[i].key = s_generic_txt[i].key;
+        s_mdns_txt[i].value = s_generic_txt[i].value;
+    }
+    ESP_RETURN_ON_ERROR(mdns_service_add(
+                            s_service_instance,
+                            ESPRESSO_DNSSD_SECURE_SERVICE,
+                            ESPRESSO_DNSSD_PROTOCOL, 8631, s_mdns_txt,
+                            secure_count),
+                        TAG, "IPPS advertisement failed");
+    if (s_pending_advertisement.ipp_everywhere) {
+        ESP_RETURN_ON_ERROR(mdns_service_subtype_add_for_host(
+                                s_service_instance,
+                                ESPRESSO_DNSSD_SECURE_SERVICE,
+                                ESPRESSO_DNSSD_PROTOCOL, NULL,
+                                ESPRESSO_DNSSD_PRINT_SUBTYPE),
+                            TAG, "secure IPP Everywhere subtype failed");
+    }
     s_advertisement = s_pending_advertisement;
     s_ipp_advertised = true;
+    s_ipps_advertised = true;
+    s_everywhere_advertised = s_pending_advertisement.ipp_everywhere;
     ESP_LOGI(TAG, "advertising modern AirPrint facade for %s",
              s_advertisement_target.instance);
     return ESP_OK;

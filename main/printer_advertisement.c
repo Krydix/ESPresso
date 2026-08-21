@@ -3,6 +3,28 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool csv_contains(const char *csv, const char *wanted)
+{
+    size_t wanted_length = strlen(wanted);
+    const char *cursor = csv;
+    while (cursor && *cursor) {
+        const char *comma = strchr(cursor, ',');
+        const char *end = comma ? comma : cursor + strlen(cursor);
+        while (cursor < end && (*cursor == ' ' || *cursor == '\t')) {
+            ++cursor;
+        }
+        while (end > cursor && (end[-1] == ' ' || end[-1] == '\t')) {
+            --end;
+        }
+        if ((size_t)(end - cursor) == wanted_length &&
+            memcmp(cursor, wanted, wanted_length) == 0) {
+            return true;
+        }
+        cursor = comma ? comma + 1 : NULL;
+    }
+    return false;
+}
+
 void printer_advertisement_build(const printer_target_t *target,
                                  const char *bridge_uuid,
                                  const char *custom_name,
@@ -34,6 +56,14 @@ void printer_advertisement_build(const printer_target_t *target,
              label);
     snprintf(advertisement->pdl, sizeof(advertisement->pdl), "%.251s",
              target->pdl);
+    if (csv_contains(target->pdl, "image/urf") &&
+        !csv_contains(target->pdl, "image/pwg-raster")) {
+        size_t length = strlen(advertisement->pdl);
+        static const char suffix[] = ",image/pwg-raster";
+        if (length + sizeof(suffix) <= sizeof(advertisement->pdl)) {
+            memcpy(advertisement->pdl + length, suffix, sizeof(suffix));
+        }
+    }
     snprintf(advertisement->urf, sizeof(advertisement->urf), "%s", target->urf);
     snprintf(advertisement->uuid, sizeof(advertisement->uuid), "%s",
              bridge_uuid ? bridge_uuid : "");
@@ -48,6 +78,21 @@ void printer_advertisement_build(const printer_target_t *target,
     advertisement->duplex[1] = '\0';
     advertisement->copies[1] = '\0';
     advertisement->collate[1] = '\0';
+    const uint64_t required_operations =
+        (1ULL << 2) | (1ULL << 4) | (1ULL << 5) | (1ULL << 6) |
+        (1ULL << 8) | (1ULL << 9) | (1ULL << 10) | (1ULL << 11) |
+        (1ULL << 57) | (1ULL << 59) | (1ULL << 60);
+    bool has_page_description = csv_contains(target->pdl, "application/pdf") ||
+                                csv_contains(target->pdl,
+                                             "application/openxps");
+    advertisement->ipp_everywhere =
+        target->ipp_everywhere && has_page_description &&
+        csv_contains(target->pdl, "image/urf") &&
+        (!target->color || csv_contains(target->pdl, "image/jpeg")) &&
+        (target->operations_supported & required_operations) ==
+            required_operations &&
+        target->page_ranges_supported && target->overrides_document_number &&
+        target->overrides_pages;
     snprintf(advertisement->printer_state,
              sizeof(advertisement->printer_state), "%u",
              target->printer_state ? target->printer_state : 3);
@@ -56,10 +101,10 @@ void printer_advertisement_build(const printer_target_t *target,
 size_t printer_advertisement_txt(const printer_advertisement_t *advertisement,
                                  printer_txt_item_t *items, size_t capacity)
 {
-    if (!advertisement || !items || capacity < ESPRESSO_DNSSD_TXT_MAX) {
+    if (!advertisement || !items || capacity < ESPRESSO_DNSSD_TXT_BASE) {
         return 0;
     }
-    const printer_txt_item_t values[ESPRESSO_DNSSD_TXT_MAX] = {
+    const printer_txt_item_t values[ESPRESSO_DNSSD_TXT_BASE] = {
         {"txtvers", "1"},
         {"qtotal", "1"},
         {"rp", "ipp/print"},
@@ -81,5 +126,20 @@ size_t printer_advertisement_txt(const printer_advertisement_t *advertisement,
         {"note", advertisement->note},
     };
     memcpy(items, values, sizeof(values));
-    return ESPRESSO_DNSSD_TXT_MAX;
+    return ESPRESSO_DNSSD_TXT_BASE;
+}
+
+size_t printer_advertisement_ipps_txt(
+    const printer_advertisement_t *advertisement, printer_txt_item_t *items,
+    size_t capacity)
+{
+    if (capacity < ESPRESSO_DNSSD_TXT_MAX) {
+        return 0;
+    }
+    size_t count = printer_advertisement_txt(advertisement, items, capacity);
+    if (count != ESPRESSO_DNSSD_TXT_BASE) {
+        return 0;
+    }
+    items[count++] = (printer_txt_item_t){"TLS", "1.2"};
+    return count;
 }

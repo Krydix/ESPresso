@@ -13,6 +13,8 @@
 
 #include "app_state.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -26,16 +28,20 @@
 #include "lwip/inet.h"
 #include "printer_discovery.h"
 #include "printer_identity.h"
+#include "printer_transport.h"
+#include "raster_converter.h"
+#include "tls_identity.h"
 
 #define REQUEST_PREFIX_MAX (64 * 1024)
 #define RESPONSE_MAX (128 * 1024)
 #define STREAM_CHUNK 4096
 #define RECEIVE_TIMEOUT_RETRIES 3
 #define IPP_SERVER_PORT 631
+#define IPPS_SERVER_PORT 8631
 #define IPP_SERVER_BACKLOG 12
 #define IPP_SERVER_WORKERS 2
 #define IPP_SERVER_TASK_STACK 4096
-#define IPP_WORKER_TASK_STACK 10240
+#define IPP_WORKER_TASK_STACK 16384
 
 static const char *TAG = "espresso_proxy";
 static SemaphoreHandle_t worker_slots;
@@ -45,8 +51,19 @@ static espresso_job_history_t job_history;
 typedef struct {
     int socket_fd;
     ipp_http_request_t *request;
+    espresso_tls_connection_t *tls;
     char peer[64];
 } ipp_connection_t;
+
+typedef struct {
+    int socket_fd;
+    bool secure;
+} ipp_worker_argument_t;
+
+typedef struct {
+    int plain_socket_fd;
+    int secure_socket_fd;
+} ipp_listener_t;
 
 static uint64_t monotonic_ms(void)
 {
@@ -197,18 +214,12 @@ static void format_peer(int socket_fd, char *output, size_t output_size)
     snprintf(output, output_size, "%s:%u", address, port);
 }
 
-static void format_host(const char *address, char *host, size_t host_size)
-{
-    if (strchr(address, ':')) {
-        snprintf(host, host_size, "[%s]", address);
-    } else {
-        snprintf(host, host_size, "%s", address);
-    }
-}
-
 static int socket_write(void *context, const uint8_t *data, size_t length)
 {
     ipp_connection_t *connection = context;
+    if (connection->tls) {
+        return tls_identity_write(connection->tls, data, length);
+    }
     ssize_t sent;
     do {
         sent = send(connection->socket_fd, data, length, 0);
@@ -293,9 +304,12 @@ static esp_err_t send_continue_if_requested(ipp_connection_t *connection)
 
 static int receive_socket(void *context, uint8_t *buffer, size_t length)
 {
-    int socket_fd = (int)(intptr_t)context;
+    ipp_connection_t *connection = context;
+    if (connection->tls) {
+        return tls_identity_read(connection->tls, buffer, length);
+    }
     for (unsigned attempt = 0; attempt < RECEIVE_TIMEOUT_RETRIES; ++attempt) {
-        ssize_t received = recv(socket_fd, buffer, length, 0);
+        ssize_t received = recv(connection->socket_fd, buffer, length, 0);
         if (received >= 0) {
             return received > INT_MAX ? INT_MAX : (int)received;
         }
@@ -418,6 +432,60 @@ static esp_err_t stream_chunked_request(ipp_connection_t *connection,
     }
     free(buffer);
     return error;
+}
+
+typedef struct {
+    ipp_connection_t *connection;
+    const uint8_t *prefix;
+    size_t prefix_length;
+    size_t prefix_offset;
+} raster_document_reader_t;
+
+typedef struct {
+    esp_http_client_handle_t client;
+} raster_document_writer_t;
+
+static int raster_document_read(void *context, uint8_t *data, size_t length)
+{
+    raster_document_reader_t *reader = context;
+    if (reader->prefix_offset < reader->prefix_length) {
+        size_t available = reader->prefix_length - reader->prefix_offset;
+        size_t copied = available < length ? available : length;
+        memcpy(data, reader->prefix + reader->prefix_offset, copied);
+        reader->prefix_offset += copied;
+        return copied <= INT_MAX ? (int)copied : -1;
+    }
+    return receive_request(reader->connection, data, length);
+}
+
+static int raster_document_write(void *context, const uint8_t *data,
+                                 size_t length)
+{
+    raster_document_writer_t *writer = context;
+    if (length > INT_MAX ||
+        write_upstream_chunk(writer->client, data, length) != ESP_OK) {
+        return -1;
+    }
+    return (int)length;
+}
+
+static espresso_raster_result_t stream_converted_document(
+    ipp_connection_t *connection, esp_http_client_handle_t client,
+    const uint8_t *prefix, size_t prefix_length)
+{
+    raster_document_reader_t reader = {
+        .connection = connection,
+        .prefix = prefix,
+        .prefix_length = prefix_length,
+    };
+    raster_document_writer_t writer = {.client = client};
+    espresso_raster_result_t result = espresso_pwg_to_urf(
+        raster_document_read, &reader, raster_document_write, &writer);
+    if (result == ESPRESSO_RASTER_OK &&
+        write_upstream_chunk(client, NULL, 0) != ESP_OK) {
+        return ESPRESSO_RASTER_WRITE_ERROR;
+    }
+    return result;
 }
 
 static esp_err_t read_upstream_response(esp_http_client_handle_t client,
@@ -598,25 +666,23 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     }
     bool document_operation = plan.document_operation;
 
-    char upstream_url[ESPRESSO_ADDRESS_MAX + ESPRESSO_PATH_MAX + 32];
-    char upstream_printer_uri[sizeof(upstream_url)];
-    char upstream_authority[ESPRESSO_ADDRESS_MAX + 32];
-    char upstream_host[ESPRESSO_ADDRESS_MAX + 3];
-    format_host(target.address, upstream_host, sizeof(upstream_host));
-    snprintf(upstream_url, sizeof(upstream_url), "http://%s:%u%s", upstream_host,
-             target.port, target.resource_path);
-    snprintf(upstream_printer_uri, sizeof(upstream_printer_uri), "ipp://%s:%u%s",
-             upstream_host, target.port, target.resource_path);
-    snprintf(upstream_authority, sizeof(upstream_authority), "ipp://%s:%u",
-             upstream_host, target.port);
+    printer_transport_endpoint_t upstream;
+    if (!printer_transport_build(&target, &upstream)) {
+        free(prefix);
+        monitor_submission_failed(monitor_id, &request_info, 0);
+        send_http_error(connection, "503 Service Unavailable",
+                        "Selected printer transport is invalid");
+        return ESP_ERR_INVALID_ARG;
+    }
 
     uint8_t *rewritten_prefix = NULL;
     size_t rewritten_length = 0;
     if (request_info.operation_id != IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
         char rejected_attribute[128] = {0};
-        codec_result = ipp_codec_rewrite_request_diagnostic(
-            prefix, prefix_length, upstream_printer_uri, upstream_authority,
-            &target, &rewritten_prefix, &rewritten_length,
+        codec_result = ipp_codec_rewrite_request_for_format_diagnostic(
+            prefix, prefix_length, upstream.printer_uri, upstream.authority,
+            &target, plan.upstream_document_format,
+            &rewritten_prefix, &rewritten_length,
             &attributes_length, rejected_attribute,
             sizeof(rejected_attribute));
         if (codec_result != IPP_CODEC_OK) {
@@ -647,9 +713,10 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         size_t capability_request_length = 0;
         codec_result = ipp_codec_build_get_printer_attributes_for_format(
             upstream_major, upstream_minor, request_info.request_id,
-            upstream_printer_uri,
+            upstream.printer_uri,
             upstream_major >= 2,
-            request_info.document_format[0] ? request_info.document_format : NULL,
+            plan.upstream_document_format ? plan.upstream_document_format :
+            (request_info.document_format[0] ? request_info.document_format : NULL),
             &capability_request, &capability_request_length);
         if (codec_result != IPP_CODEC_OK) {
             free(prefix);
@@ -664,7 +731,11 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
         rewritten_prefix[0] = upstream_major;
         rewritten_prefix[1] = upstream_minor;
     }
-    bool outgoing_chunked = incoming_chunked && document_operation;
+    bool converting_document =
+        plan.document_transform == IPP_PROXY_DOCUMENT_PWG_TO_URF &&
+        document_operation;
+    bool outgoing_chunked = converting_document ||
+                            (incoming_chunked && document_operation);
     int64_t outgoing_length = -1;
     if (!outgoing_chunked) {
         outgoing_length = (int64_t)request_body_length +
@@ -680,11 +751,15 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     }
 
     esp_http_client_config_t config = {
-        .url = upstream_url,
+        .url = upstream.http_url,
         .timeout_ms = document_operation ? 120000 : 30000,
         .buffer_size = 4096,
         .buffer_size_tx = 4096,
         .disable_auto_redirect = true,
+        .crt_bundle_attach = upstream.verify_certificate ?
+                                 esp_crt_bundle_attach : NULL,
+        .common_name = upstream.verify_certificate ?
+                           upstream.certificate_name : NULL,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
@@ -698,33 +773,62 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/ipp");
     esp_http_client_set_header(client, "Accept", "application/ipp");
-    esp_http_client_set_header(client, "User-Agent", "ESPresso/phase1");
+    esp_http_client_set_header(client, "User-Agent", "ESPresso/phase3");
 
     ESP_LOGI(TAG,
              "client %s forwarding %s as IPP %u.%u to %s transport=%s",
              connection->peer, operation_name(operation_id), upstream_major,
-             upstream_minor, upstream_url,
+             upstream_minor, upstream.http_url,
              outgoing_chunked ? "chunked" : "content-length");
 
     esp_err_t err = esp_http_client_open(
         client, outgoing_chunked ? -1 : (int)outgoing_length);
     if (err == ESP_OK) {
+        size_t rewritten_send_length = converting_document ?
+                                           attributes_length :
+                                           rewritten_length;
         err = outgoing_chunked
                   ? write_upstream_chunk(client, rewritten_prefix,
-                                         rewritten_length)
-                  : write_all(client, rewritten_prefix, rewritten_length);
+                                         rewritten_send_length)
+                  : write_all(client, rewritten_prefix,
+                              rewritten_send_length);
     }
     free(rewritten_prefix);
     rewritten_prefix = NULL;
     if (err == ESP_OK) {
-        err = outgoing_chunked
-                  ? stream_chunked_request(connection, client)
-                  : stream_remaining_request(
-                        connection, client, request_body_length - prefix_length);
+        if (converting_document) {
+            espresso_raster_result_t raster_result = stream_converted_document(
+                connection, client, prefix + request_info.attributes_length,
+                prefix_length - request_info.attributes_length);
+            if (raster_result == ESPRESSO_RASTER_INVALID ||
+                raster_result == ESPRESSO_RASTER_UNSUPPORTED ||
+                raster_result == ESPRESSO_RASTER_READ_ERROR) {
+                ESP_LOGW(TAG, "client %s PWG Raster conversion rejected: %d",
+                         connection->peer, raster_result);
+                esp_http_client_cleanup(client);
+                free(prefix);
+                monitor_submission_failed(monitor_id, &request_info, 0);
+                return send_ipp_status(
+                    connection, &request_info,
+                    raster_result == ESPRESSO_RASTER_UNSUPPORTED ?
+                        IPP_STATUS_CLIENT_ERROR_DOCUMENT_FORMAT_NOT_SUPPORTED :
+                        IPP_STATUS_CLIENT_ERROR_BAD_REQUEST,
+                    raster_result == ESPRESSO_RASTER_UNSUPPORTED ?
+                        "PWG Raster layout is not supported by the selected printer" :
+                        "PWG Raster document is malformed or incomplete");
+            }
+            err = raster_result == ESPRESSO_RASTER_OK ? ESP_OK : ESP_FAIL;
+        } else {
+            err = outgoing_chunked
+                      ? stream_chunked_request(connection, client)
+                      : stream_remaining_request(
+                            connection, client,
+                            request_body_length - prefix_length);
+        }
     }
     free(prefix);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "forwarding request to %s failed: %s", upstream_url,
+        ESP_LOGE(TAG, "forwarding request to %s failed: %s", upstream.http_url,
                  esp_err_to_name(err));
         esp_http_client_cleanup(client);
         monitor_submission_failed(monitor_id, &request_info, 0);
@@ -803,8 +907,11 @@ static esp_err_t proxy_handler(ipp_connection_t *connection)
     } else if (operation_id == IPP_OPERATION_CANCEL_JOB) {
         monitor_update(monitor_id, ESPRESSO_JOB_CANCELLED, NULL, 0);
     }
-    const char *local_printer_uri = "ipp://espresso.local:631/ipp/print";
-    const char *local_authority = "ipp://espresso.local:631";
+    const char *local_printer_uri = connection->tls ?
+        "ipps://espresso.local:8631/ipp/print" :
+        "ipp://espresso.local:631/ipp/print";
+    const char *local_authority = connection->tls ?
+        "ipps://espresso.local:8631" : "ipp://espresso.local:631";
     if (operation_id == IPP_OPERATION_GET_PRINTER_ATTRIBUTES) {
         char local_uuid[ESPRESSO_UUID_MAX];
         printer_identity_target_uuid(&target, local_uuid, sizeof(local_uuid));
@@ -901,22 +1008,29 @@ static void configure_client_socket(int socket_fd)
 
 static void ipp_worker_task(void *argument)
 {
+    ipp_worker_argument_t *worker = argument;
     ipp_connection_t connection = {
-        .socket_fd = (int)(intptr_t)argument,
+        .socket_fd = worker->socket_fd,
         .request = NULL,
     };
+    bool secure = worker->secure;
+    free(worker);
     format_peer(connection.socket_fd, connection.peer,
                 sizeof(connection.peer));
-    ipp_http_result_t result = ipp_http_request_open(
-        receive_socket, (void *)(intptr_t)connection.socket_fd,
-        &connection.request);
+    esp_err_t tls_error = secure ?
+        tls_identity_accept(connection.socket_fd, &connection.tls) : ESP_OK;
+    ipp_http_result_t result = tls_error == ESP_OK ?
+        ipp_http_request_open(receive_socket, &connection,
+                              &connection.request) : IPP_HTTP_IO_ERROR;
     if (result != IPP_HTTP_OK) {
         ESP_LOGW(TAG, "client %s HTTP request rejected: parser=%d",
                  connection.peer, result);
-        send_http_error(&connection, result == IPP_HTTP_TOO_LARGE
-                                         ? "413 Content Too Large"
-                                         : "400 Bad Request",
-                        "Malformed or unsupported HTTP request");
+        if (tls_error == ESP_OK) {
+            send_http_error(&connection, result == IPP_HTTP_TOO_LARGE
+                                             ? "413 Content Too Large"
+                                             : "400 Bad Request",
+                            "Malformed or unsupported HTTP request");
+        }
     } else if (strcasecmp(ipp_http_request_method(connection.request),
                           "POST") != 0) {
         ESP_LOGW(TAG, "client %s HTTP method rejected: %s", connection.peer,
@@ -927,6 +1041,7 @@ static void ipp_worker_task(void *argument)
         proxy_handler(&connection);
     }
     ipp_http_request_destroy(connection.request);
+    tls_identity_close(connection.tls);
     shutdown(connection.socket_fd, SHUT_RDWR);
     close(connection.socket_fd);
     xSemaphoreGive(worker_slots);
@@ -935,7 +1050,7 @@ static void ipp_worker_task(void *argument)
 
 static void ipp_accept_task(void *argument)
 {
-    int listen_fd = (int)(intptr_t)argument;
+    ipp_listener_t *listener = argument;
     while (true) {
         /* Reserve capacity before accept(). Excess Apple capability probes
          * remain in the TCP backlog instead of receiving a transient 503 or
@@ -943,6 +1058,20 @@ static void ipp_accept_task(void *argument)
         if (xSemaphoreTake(worker_slots, portMAX_DELAY) != pdTRUE) {
             continue;
         }
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(listener->plain_socket_fd, &read_fds);
+        FD_SET(listener->secure_socket_fd, &read_fds);
+        int maximum = listener->plain_socket_fd > listener->secure_socket_fd ?
+                          listener->plain_socket_fd :
+                          listener->secure_socket_fd;
+        if (select(maximum + 1, &read_fds, NULL, NULL, NULL) <= 0) {
+            xSemaphoreGive(worker_slots);
+            continue;
+        }
+        bool secure = FD_ISSET(listener->secure_socket_fd, &read_fds);
+        int listen_fd = secure ? listener->secure_socket_fd :
+                                 listener->plain_socket_fd;
         struct sockaddr_storage address;
         socklen_t address_length = sizeof(address);
         int client_fd = accept(listen_fd, (struct sockaddr *)&address,
@@ -953,13 +1082,56 @@ static void ipp_accept_task(void *argument)
             continue;
         }
         configure_client_socket(client_fd);
+        ipp_worker_argument_t *worker = malloc(sizeof(*worker));
+        if (!worker) {
+            xSemaphoreGive(worker_slots);
+            close(client_fd);
+            continue;
+        }
+        worker->socket_fd = client_fd;
+        worker->secure = secure;
         if (xTaskCreate(ipp_worker_task, "espresso_ipp_client",
-                        IPP_WORKER_TASK_STACK, (void *)(intptr_t)client_fd, 5,
+                        IPP_WORKER_TASK_STACK, worker, 5,
                         NULL) != pdPASS) {
+            free(worker);
             xSemaphoreGive(worker_slots);
             close(client_fd);
         }
     }
+}
+
+static int open_listener(uint16_t port)
+{
+#if CONFIG_LWIP_IPV6
+    int listen_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_IP);
+#else
+    int listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+#endif
+    if (listen_fd < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#if CONFIG_LWIP_IPV6
+    const struct in6_addr any_address = IN6ADDR_ANY_INIT;
+    struct sockaddr_in6 address = {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(port),
+        .sin6_addr = any_address,
+    };
+#else
+    struct sockaddr_in address = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+#endif
+    if (bind(listen_fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
+        listen(listen_fd, IPP_SERVER_BACKLOG) != 0) {
+        close(listen_fd);
+        return -1;
+    }
+    return listen_fd;
 }
 
 esp_err_t ipp_proxy_start(void)
@@ -969,36 +1141,18 @@ esp_err_t ipp_proxy_start(void)
     if (!job_history_lock) {
         return ESP_ERR_NO_MEM;
     }
-#if CONFIG_LWIP_IPV6
-    int listen_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_IP);
-#else
-    int listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
-#endif
+    ESP_RETURN_ON_ERROR(tls_identity_init(), TAG,
+                        "IPPS identity initialization failed");
+    int listen_fd = open_listener(IPP_SERVER_PORT);
+    int secure_listen_fd = open_listener(IPPS_SERVER_PORT);
     if (listen_fd < 0) {
         ESP_LOGE(TAG, "IPP socket allocation failed: errno %d", errno);
         vSemaphoreDelete(job_history_lock);
         job_history_lock = NULL;
         return ESP_FAIL;
     }
-    int reuse = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#if CONFIG_LWIP_IPV6
-    const struct in6_addr any_address = IN6ADDR_ANY_INIT;
-    struct sockaddr_in6 address = {
-        .sin6_family = AF_INET6,
-        .sin6_port = htons(IPP_SERVER_PORT),
-        .sin6_addr = any_address,
-    };
-#else
-    struct sockaddr_in address = {
-        .sin_family = AF_INET,
-        .sin_port = htons(IPP_SERVER_PORT),
-        .sin_addr.s_addr = htonl(INADDR_ANY),
-    };
-#endif
-    if (bind(listen_fd, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-        listen(listen_fd, IPP_SERVER_BACKLOG) != 0) {
-        ESP_LOGE(TAG, "IPP server bind/listen failed: errno %d", errno);
+    if (secure_listen_fd < 0) {
+        ESP_LOGE(TAG, "IPPS server bind/listen failed: errno %d", errno);
         close(listen_fd);
         vSemaphoreDelete(job_history_lock);
         job_history_lock = NULL;
@@ -1008,22 +1162,41 @@ esp_err_t ipp_proxy_start(void)
                                             IPP_SERVER_WORKERS);
     if (!worker_slots) {
         close(listen_fd);
+        close(secure_listen_fd);
         vSemaphoreDelete(job_history_lock);
         job_history_lock = NULL;
         return ESP_ERR_NO_MEM;
     }
+    ipp_listener_t *listener = malloc(sizeof(*listener));
+    if (!listener) {
+        close(listen_fd);
+        close(secure_listen_fd);
+        vSemaphoreDelete(worker_slots);
+        worker_slots = NULL;
+        vSemaphoreDelete(job_history_lock);
+        job_history_lock = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    *listener = (ipp_listener_t){
+        .plain_socket_fd = listen_fd,
+        .secure_socket_fd = secure_listen_fd,
+    };
     if (xTaskCreate(ipp_accept_task, "espresso_ipp", IPP_SERVER_TASK_STACK,
-                    (void *)(intptr_t)listen_fd, 5, NULL) != pdPASS) {
+                    listener, 5, NULL) != pdPASS) {
+        free(listener);
         vSemaphoreDelete(worker_slots);
         worker_slots = NULL;
         close(listen_fd);
+        close(secure_listen_fd);
         vSemaphoreDelete(job_history_lock);
         job_history_lock = NULL;
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG,
-             "IPP compatibility endpoint listening on port %d (%d workers, "
+             "IPP compatibility endpoints listening on ports %d and %d "
+             "(%d workers, "
              "%d-socket lwIP table)",
-             IPP_SERVER_PORT, IPP_SERVER_WORKERS, CONFIG_LWIP_MAX_SOCKETS);
+             IPP_SERVER_PORT, IPPS_SERVER_PORT, IPP_SERVER_WORKERS,
+             CONFIG_LWIP_MAX_SOCKETS);
     return ESP_OK;
 }

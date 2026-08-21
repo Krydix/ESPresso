@@ -6,11 +6,13 @@
 
 #include "app_state.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "ipp_codec.h"
+#include "printer_transport.h"
 
 #define CAPABILITY_RESPONSE_MAX (128 * 1024)
 #define IPP_STATUS_ERROR_BAD_REQUEST 0x0400
@@ -23,15 +25,6 @@ static uint32_t s_request_id = 1;
 static SemaphoreHandle_t s_refresh_lock;
 static TickType_t s_last_refresh;
 static char s_last_endpoint[ESPRESSO_ADDRESS_MAX + ESPRESSO_PATH_MAX + 16];
-
-static void format_host(const char *address, char *host, size_t host_size)
-{
-    if (strchr(address, ':')) {
-        snprintf(host, host_size, "[%s]", address);
-    } else {
-        snprintf(host, host_size, "%s", address);
-    }
-}
 
 static esp_err_t write_request(esp_http_client_handle_t client,
                                const uint8_t *request, size_t request_length)
@@ -104,30 +97,31 @@ static esp_err_t query(const printer_target_t *target, uint8_t major, uint8_t mi
                        bool include_media_col_database, const char *document_format,
                        uint8_t **response, size_t *response_length)
 {
-    char http_url[ESPRESSO_ADDRESS_MAX + ESPRESSO_PATH_MAX + 32];
-    char printer_uri[sizeof(http_url)];
-    char host[ESPRESSO_ADDRESS_MAX + 3];
-    format_host(target->address, host, sizeof(host));
-    snprintf(http_url, sizeof(http_url), "http://%s:%u%s", host,
-             target->port, target->resource_path);
-    snprintf(printer_uri, sizeof(printer_uri), "ipp://%s:%u%s", host,
-             target->port, target->resource_path);
+    printer_transport_endpoint_t endpoint;
+    if (!printer_transport_build(target, &endpoint)) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     uint8_t *request = NULL;
     size_t request_length = 0;
     ipp_codec_result_t codec = ipp_codec_build_get_printer_attributes_for_format(
-        major, minor, s_request_id++, printer_uri, include_media_col_database,
+        major, minor, s_request_id++, endpoint.printer_uri,
+        include_media_col_database,
         document_format, &request, &request_length);
     if (codec != IPP_CODEC_OK) {
         return codec == IPP_CODEC_NO_MEMORY ? ESP_ERR_NO_MEM : ESP_FAIL;
     }
 
     esp_http_client_config_t config = {
-        .url = http_url,
+        .url = endpoint.http_url,
         .timeout_ms = 4000,
         .buffer_size = 4096,
         .buffer_size_tx = 1024,
         .disable_auto_redirect = true,
+        .crt_bundle_attach = endpoint.verify_certificate ?
+                                 esp_crt_bundle_attach : NULL,
+        .common_name = endpoint.verify_certificate ?
+                           endpoint.certificate_name : NULL,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
@@ -174,6 +168,10 @@ esp_err_t printer_capabilities_probe(printer_target_t *target)
     target->accepting_jobs = false;
     target->accepting_jobs_known = false;
     target->state_reasons[0] = '\0';
+    target->page_ranges_supported = false;
+    target->overrides_document_number = false;
+    target->overrides_pages = false;
+    target->ipp_everywhere = false;
 
     esp_err_t err = query(target, 2, 0, true, NULL, &response, &response_length);
     uint16_t status = ipp_codec_message_code(response, response_length);

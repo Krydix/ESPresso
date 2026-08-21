@@ -80,10 +80,11 @@ selection on an actual iPhone remain a hardware/LAN test because host CI cannot
 emulate Apple's multicast browser.
 
 `make test-conformance-report` runs CUPS `ipp-1.1.test`, `ipp-2.0.test`, and
-`ipp-everywhere.test` with continue-on-error reporting. IPP/1.1 and IPP/2.0 are
-required green gates. IPP Everywhere remains expected red because it requires formats
-and operations beyond the truthful AirPrint relay contract. CI uploads the JSON
-reports for both Linux and macOS CUPS.
+`ipp-everywhere.test` with continue-on-error reporting. All three are required green
+gates. The Everywhere suite uses a target fixture that truthfully supplies mandatory
+JPEG, overrides, page ranges, and advanced operations; the facade adds its tested PWG
+Raster conversion and modern metadata. A simpler legacy target does not falsely gain
+those non-convertible capabilities. CI uploads the JSON reports for Linux and macOS CUPS.
 
 ## Fixture contract
 

@@ -3,6 +3,7 @@
 #include "ipp_proxy.h"
 #include "ota_update.h"
 #include "printer_discovery.h"
+#include "tls_identity.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 
@@ -25,6 +26,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(app_state_init());
+    ESP_ERROR_CHECK(tls_identity_init());
     ESP_ERROR_CHECK(ota_update_init());
     ESP_ERROR_CHECK(wifi_manager_init());
     ESP_ERROR_CHECK(web_server_start());

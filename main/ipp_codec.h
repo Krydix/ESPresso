@@ -115,6 +115,20 @@ ipp_codec_result_t ipp_codec_rewrite_request_diagnostic(
     char *rejected_attribute,
     size_t rejected_attribute_size);
 
+/* Rewrite a facade format to the format sent to the legacy printer. */
+ipp_codec_result_t ipp_codec_rewrite_request_for_format_diagnostic(
+    const uint8_t *input,
+    size_t input_length,
+    const char *printer_uri,
+    const char *uri_authority,
+    const printer_target_t *target,
+    const char *upstream_document_format,
+    uint8_t **output,
+    size_t *output_length,
+    size_t *attributes_length,
+    char *rejected_attribute,
+    size_t rejected_attribute_size);
+
 /* Build the small CUPS-style Get-Printer-Attributes probe request. */
 ipp_codec_result_t ipp_codec_build_get_printer_attributes(
     uint8_t major,

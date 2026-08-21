@@ -8,23 +8,24 @@ ESPresso is an ESP32, ESP32-S2, and ESP32-S3 compatibility proxy for a deliberat
 
 ```mermaid
 flowchart TD
-  client["current iPhone / Mac"]
+  client["current iPhone / Mac / Windows / Linux"]
   espresso["ESPresso"]
   printer["legacy AirPrint printer"]
 
-  client -->|"modern AirPrint discovery + IPP 2.0-facing endpoint"| espresso
-  espresso -->|"IPP 1.1 + unchanged Apple Raster/URF document stream"| printer
+  client -->|"DNS-SD + IPP/IPPS 2.0 + URF/PWG Raster"| espresso
+  espresso -->|"negotiated IPP/IPPS + Apple Raster/URF"| printer
 ```
 
 It does not run CUPS, render PDF, or contain printer drivers. It discovers an existing
-AirPrint/IPP printer, republishes its real pass-through formats through a current
-`_universal._sub._ipp._tcp` service, translates the IPP envelope, and streams the
-document bytes to the printer.
+AirPrint/IPP printer, republishes its real pass-through formats through current
+AirPrint and IPP Everywhere DNS-SD services, translates the IPP envelope, converts
+PWG Raster to Apple Raster when necessary, and streams the document to the printer.
 
 > [!WARNING]
 > This is alpha firmware. It builds and its protocol codec is host-tested, but it has
 > not yet been validated against a physical legacy printer fixture. Do not call it a
-> general IPP Everywhere implementation yet.
+> universal print server: capabilities such as JPEG and advanced job operations remain
+> conditional on the selected physical printer.
 
 ## What is implemented
 
@@ -34,12 +35,16 @@ document bytes to the printer.
 - DNS funnel plus DHCP captive-portal URL (Option 114)
 - Wi-Fi scan, credential persistence, reconnect, and setup fallback
 - `espresso.local` configuration UI
-- ESP-native DNS-SD discovery of `_ipp._tcp` printers
+- ESP-native DNS-SD discovery of `_ipp._tcp` and `_ipps._tcp` printers
 - CUPS-style active `Get-Printer-Attributes` probing: IPP 2.0 first, then IPP 1.1
 - compact persisted capability profile generated from DNS-SD plus IPP
 - conservative filtering for printers reporting both `image/urf` and URF modes
 - persistent printer selection
-- modern AirPrint DNS-SD facade on port 631 with the `_universal` subtype
+- modern AirPrint/IPP Everywhere DNS-SD facade on IPP port 631 and IPPS port 8631,
+  with `_universal` and `_print` subtypes
+- persistent per-device ECDSA certificate for `espresso.local`, downloadable from
+  the management UI; IPPS upstream certificates require CA trust and hostname match
+- bounded PWG Raster to Apple Raster conversion with compressed rows forwarded in place
 - streaming IPP proxy; the document body is not buffered
 - replacement of modern capability requests with a legacy-safe CUPS-style query
 - format-specific capability probes for every bounded pass-through PDL, with URF first
@@ -104,6 +109,8 @@ Install ESP-IDF 5.4, then:
 
 ```sh
 make test
+make test-raster
+make test-ipps
 make test-cups
 make test-compat
 make test-sanitize
@@ -128,10 +135,12 @@ multi-step job flows, exact 1 MiB document relays, IPP/1.1 fallback, chunked leg
 responses, legacy attribute aliases, DNS-SD recovery, and malformed-response
 rejection. `test-fuzz-smoke` runs a sanitizer-coverage-guided bounded IPP/profile
 fuzzer. `test-conformance-report` requires the complete CUPS IPP/1.1 and IPP/2.0
-suites to pass and records the broader IPP Everywhere expected failure as a CI artifact.
+suites to pass. It also requires IPP Everywhere to pass against the truthful
+conformance fixture whose upstream supplies mandatory JPEG and advanced operations;
+ESPresso supplies PWG Raster conversion and facade metadata.
 `test-roadmap` validates [the feature matrix](tests/feature-matrix.json) and executes
-the next-phase expected-failure probes, failing when an outcome changes without the
-matrix being promoted.
+its automated capability probes, failing when an outcome changes without the matrix
+being updated.
 See [docs/compatibility-lab.md](docs/compatibility-lab.md). `IDF_PATH`
 defaults to `~/esp/esp-idf` and can be overridden on the command line.
 
@@ -147,10 +156,13 @@ main/
   printer_advertisement.c host-tested AirPrint DNS-SD TXT policy
   printer_capabilities.c CUPS-style active IPP probing with 1.1 fallback
   printer_identity.c    stable bridge identity distinct from the old printer
+  printer_transport.c   tested IPP/IPPS endpoint and certificate policy
   ipp_proxy.c           bounded IPP envelope buffering + document streaming
   ipp_proxy_core.c      host-tested production request relay policy
   ipp_stream.c          bounded, short-I/O-safe document pump
   ipp_codec.c           allocation-bounded IPP attribute/URI transformation
+  raster_converter.c    bounded compressed PWG Raster → Apple Raster conversion
+  tls_identity.c        persistent device certificate + IPPS server sessions
   app_state.c           synchronized runtime state + NVS printer profile
 
 frontend/index.html     UI embedded into firmware
@@ -173,17 +185,22 @@ capability query fallback, normalized profile, and outward DNS-SD/IPP mappings. 
 
 ## Current compatibility boundary
 
-The first target must already:
+The selected target must:
 
-- be reachable over unencrypted IPP on the same IPv4 or IPv6 LAN;
-- advertise `_ipp._tcp` through Bonjour/mDNS;
+- be reachable over IPP or certificate-valid IPPS on the same IPv4 or IPv6 LAN;
+- advertise `_ipp._tcp` or `_ipps._tcp` through Bonjour/mDNS;
 - accept Apple Raster (`image/urf`); and
-- accept the same document format that ESPresso advertises to the client.
+- accept pass-through formats that ESPresso advertises other than PWG Raster.
 
 Any format in the selected printer's `document-format-supported` value can be relayed
 unchanged, but Apple Raster remains mandatory for this first target.
 
-Not implemented: IPPS/TLS, PWG/Apple Raster conversion, PDF rendering, USB printers,
+PWG Raster is advertised only for a URF-capable target and is converted while its
+compressed rows stream through bounded memory. IPP Everywhere conformance is conditional:
+for example, a color target must itself accept JPEG, and advanced job operations and
+overrides are advertised only when the target reports them.
+
+Not implemented: PDF/JPEG rendering, USB printers,
 PCL/PostScript drivers, PPD processing, filters, subscriptions implemented by ESPresso,
 spooling, or a signed compatibility database. ESPresso can derive basic
 media-size collections from PWG self-describing names, but margins, sources, finishings,

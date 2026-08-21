@@ -26,7 +26,9 @@ idf_component_register(
         mdns
         mbedtls
         nvs_flash
-    EMBED_FILES "../frontend/index.html"
+    EMBED_FILES
+        "../frontend/index.html"
+        "../favicon.svg"
 )
 
 set(ESPRESSO_SETUP_SUFFIX "$ENV{ESPRESSO_SETUP_SUFFIX}")

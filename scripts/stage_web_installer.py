@@ -40,6 +40,7 @@ def main() -> None:
     firmware_dir = args.output_dir / "firmware"
     firmware_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / "web-installer" / "index.html", args.output_dir / "index.html")
+    shutil.copy2(root / "favicon.svg", args.output_dir / "favicon.svg")
     shutil.copy2(root / "logo.png", args.output_dir / "logo.png")
 
     parts = []

@@ -15,6 +15,8 @@
 
 extern const char frontend_index_start[] asm("_binary_index_html_start");
 extern const char frontend_index_end[] asm("_binary_index_html_end");
+extern const char favicon_svg_start[] asm("_binary_favicon_svg_start");
+extern const char favicon_svg_end[] asm("_binary_favicon_svg_end");
 
 static const char *TAG = "espresso_web";
 
@@ -69,6 +71,14 @@ static esp_err_t root_handler(httpd_req_t *request)
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     return httpd_resp_send(request, frontend_index_start,
                            frontend_index_end - frontend_index_start);
+}
+
+static esp_err_t favicon_handler(httpd_req_t *request)
+{
+    httpd_resp_set_type(request, "image/svg+xml");
+    httpd_resp_set_hdr(request, "Cache-Control", "public, max-age=86400");
+    return httpd_resp_send(request, favicon_svg_start,
+                           favicon_svg_end - favicon_svg_start);
 }
 
 static esp_err_t status_handler(httpd_req_t *request)
@@ -354,6 +364,7 @@ esp_err_t web_server_start(void)
 
     const httpd_uri_t handlers[] = {
         {.uri = "/", .method = HTTP_GET, .handler = root_handler},
+        {.uri = "/favicon.svg", .method = HTTP_GET, .handler = favicon_handler},
         {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
         {.uri = "/api/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_handler},
         {.uri = "/api/wifi/connect", .method = HTTP_POST, .handler = wifi_connect_handler},

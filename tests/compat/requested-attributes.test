@@ -14,3 +14,147 @@
   EXPECT !printer-make-and-model
   EXPECT !urf-supported
 }
+
+{
+  NAME "printer-description expands without Job Template attributes"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes printer-description
+  STATUS successful-ok
+  EXPECT attributes-charset OF-TYPE charset
+  EXPECT attributes-natural-language OF-TYPE naturalLanguage
+  EXPECT printer-uri-supported OF-TYPE uri
+  EXPECT printer-name OF-TYPE name
+  EXPECT document-format-supported OF-TYPE mimeMediaType
+  EXPECT !sides-supported
+  EXPECT !print-color-mode-supported
+  EXPECT !media-col-database
+}
+
+{
+  NAME "job-template expands without Printer Description attributes"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes job-template
+  STATUS successful-ok
+  EXPECT attributes-charset OF-TYPE charset
+  EXPECT attributes-natural-language OF-TYPE naturalLanguage
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT print-color-mode-supported OF-TYPE keyword
+  EXPECT !printer-name
+  EXPECT !printer-uri-supported
+  EXPECT !document-format-supported
+  EXPECT !media-col-database
+}
+
+{
+  NAME "Multiple requested-attributes groups are combined"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes printer-description,job-template
+  STATUS successful-ok
+  EXPECT printer-name OF-TYPE name
+  EXPECT printer-uri-supported OF-TYPE uri
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT print-color-mode-supported OF-TYPE keyword
+  EXPECT !media-col-database
+}
+
+{
+  NAME "A group selector and exact attribute name form a union"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes printer-description,sides-supported
+  STATUS successful-ok
+  EXPECT printer-name OF-TYPE name
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT !print-color-mode-supported
+  EXPECT !media-col-database
+}
+
+{
+  NAME "media-col-database is returned only when named explicitly"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes job-template,media-col-database
+  STATUS successful-ok
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT media-col-database OF-TYPE collection
+  EXPECT !printer-name
+}
+
+{
+  NAME "Unknown selectors do not expand the response"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes espresso-unknown-group
+  STATUS successful-ok
+  EXPECT attributes-charset OF-TYPE charset
+  EXPECT attributes-natural-language OF-TYPE naturalLanguage
+  EXPECT !printer-name
+  EXPECT !sides-supported
+  EXPECT !media-col-database
+}
+
+{
+  NAME "Duplicate setOf selectors do not duplicate response attributes"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes job-template,job-template,sides-supported
+  STATUS successful-ok
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT print-color-mode-supported OF-TYPE keyword
+  EXPECT !printer-name
+  EXPECT !media-col-database
+}
+
+{
+  NAME "all omits media-col-database unless it is explicitly named"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes all
+  STATUS successful-ok
+  EXPECT printer-name OF-TYPE name
+  EXPECT printer-uri-supported OF-TYPE uri
+  EXPECT document-format-supported OF-TYPE mimeMediaType
+  EXPECT sides-supported OF-TYPE keyword
+  EXPECT print-color-mode-supported OF-TYPE keyword
+  EXPECT !media-col-database
+}
+
+{
+  NAME "all plus media-col-database returns the complete normalized response"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes all,media-col-database
+  STATUS successful-ok
+  EXPECT printer-name OF-TYPE name
+  EXPECT media-col-database OF-TYPE collection
+}

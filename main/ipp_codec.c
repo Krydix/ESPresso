@@ -10,6 +10,7 @@
 #define IPP_NAME_MAX 255
 
 #define IPP_TAG_OPERATION_ATTRIBUTES 0x01
+#define IPP_TAG_JOB_ATTRIBUTES 0x02
 #define IPP_TAG_END_ATTRIBUTES 0x03
 #define IPP_TAG_PRINTER_ATTRIBUTES 0x04
 #define IPP_TAG_INTEGER 0x21
@@ -218,6 +219,147 @@ static void csv_add_split(char *csv, size_t csv_size, const uint8_t *value,
             start = i + 1;
         }
     }
+}
+
+typedef uint8_t requested_group_mask_t;
+#define REQUESTED_GROUP_JOB_TEMPLATE (1U << 0)
+#define REQUESTED_GROUP_JOB_DESCRIPTION (1U << 1)
+#define REQUESTED_GROUP_PRINTER_DESCRIPTION (1U << 2)
+
+typedef struct {
+    const char *selector;
+    requested_group_mask_t group;
+} requested_group_selector_t;
+
+static const requested_group_selector_t REQUESTED_GROUP_SELECTORS[] = {
+    {"job-template", REQUESTED_GROUP_JOB_TEMPLATE},
+    {"job-description", REQUESTED_GROUP_JOB_DESCRIPTION},
+    {"printer-description", REQUESTED_GROUP_PRINTER_DESCRIPTION},
+};
+
+/* RFC 8011 section 5.2 plus the driverless-printing Job Template extensions. */
+static const char *const JOB_TEMPLATE_ATTRIBUTES[] = {
+    "copies",
+    "finishings",
+    "finishings-col",
+    "finishing-template",
+    "job-account-id",
+    "job-accounting-user-id",
+    "job-hold-until",
+    "job-priority",
+    "job-sheets",
+    "job-sheets-col",
+    "media",
+    "media-col",
+    "multiple-document-handling",
+    "number-up",
+    "orientation-requested",
+    "output-bin",
+    "page-ranges",
+    "pages-ranges",
+    "print-color-mode",
+    "print-content-optimize",
+    "print-quality",
+    "print-rendering-intent",
+    "printer-resolution",
+    "sheet-collate",
+    "sides",
+};
+
+static const char *const PRINTER_JOB_TEMPLATE_SUFFIXES[] = {
+    "-default",
+    "-supported",
+    "-ready",
+};
+
+/* Expensive capability databases are returned only when explicitly named. */
+static const char *const EXPLICIT_ONLY_PRINTER_ATTRIBUTES[] = {
+    "media-col-database",
+};
+
+static bool attribute_name_equals(const char *name, const char *expected)
+{
+    return equal_span(name, strlen(name), expected, strlen(expected));
+}
+
+static bool is_job_template_attribute(uint8_t delimiter_tag, const char *name)
+{
+    for (size_t i = 0;
+         i < sizeof(JOB_TEMPLATE_ATTRIBUTES) / sizeof(JOB_TEMPLATE_ATTRIBUTES[0]);
+         ++i) {
+        const char *base = JOB_TEMPLATE_ATTRIBUTES[i];
+        size_t base_length = strlen(base);
+        if (delimiter_tag == IPP_TAG_JOB_ATTRIBUTES &&
+            attribute_name_equals(name, base)) {
+            return true;
+        }
+        if (delimiter_tag != IPP_TAG_PRINTER_ATTRIBUTES ||
+            strlen(name) <= base_length ||
+            !equal_span(name, base_length, base, base_length)) {
+            continue;
+        }
+        const char *suffix = name + base_length;
+        for (size_t suffix_index = 0;
+             suffix_index < sizeof(PRINTER_JOB_TEMPLATE_SUFFIXES) /
+                                sizeof(PRINTER_JOB_TEMPLATE_SUFFIXES[0]);
+             ++suffix_index) {
+            if (attribute_name_equals(
+                    suffix, PRINTER_JOB_TEMPLATE_SUFFIXES[suffix_index])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool is_explicit_only_printer_attribute(const char *name)
+{
+    for (size_t i = 0;
+         i < sizeof(EXPLICIT_ONLY_PRINTER_ATTRIBUTES) /
+                 sizeof(EXPLICIT_ONLY_PRINTER_ATTRIBUTES[0]);
+         ++i) {
+        if (attribute_name_equals(name, EXPLICIT_ONLY_PRINTER_ATTRIBUTES[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static requested_group_mask_t classify_response_attribute(uint8_t delimiter_tag,
+                                                           const char *name)
+{
+    if (delimiter_tag == IPP_TAG_PRINTER_ATTRIBUTES) {
+        if (is_explicit_only_printer_attribute(name)) {
+            return 0;
+        }
+        return is_job_template_attribute(delimiter_tag, name) ?
+                   REQUESTED_GROUP_JOB_TEMPLATE :
+                   REQUESTED_GROUP_PRINTER_DESCRIPTION;
+    }
+    if (delimiter_tag == IPP_TAG_JOB_ATTRIBUTES) {
+        return is_job_template_attribute(delimiter_tag, name) ?
+                   REQUESTED_GROUP_JOB_TEMPLATE :
+                   REQUESTED_GROUP_JOB_DESCRIPTION;
+    }
+    return 0;
+}
+
+static requested_group_mask_t requested_group_mask(
+    const char *requested_attributes)
+{
+    requested_group_mask_t groups = 0;
+    for (size_t i = 0;
+         i < sizeof(REQUESTED_GROUP_SELECTORS) /
+                 sizeof(REQUESTED_GROUP_SELECTORS[0]);
+         ++i) {
+        const requested_group_selector_t *selector =
+            &REQUESTED_GROUP_SELECTORS[i];
+        if (csv_contains(requested_attributes, selector->selector,
+                         strlen(selector->selector))) {
+            groups |= selector->group;
+        }
+    }
+    return groups;
 }
 
 static void csv_remove(char *csv, size_t csv_size, const char *unwanted)
@@ -1132,30 +1274,17 @@ ipp_codec_result_t ipp_codec_inspect_request(
     return IPP_CODEC_INCOMPLETE;
 }
 
-ipp_codec_result_t ipp_codec_filter_printer_response(
-    const uint8_t *input, size_t input_length, const char *requested_attributes,
+ipp_codec_result_t ipp_codec_filter_response(
+    const uint8_t *input, size_t input_length,
+    ipp_response_kind_t response_kind, const char *requested_attributes,
     uint8_t **output, size_t *output_length, size_t *attributes_length)
 {
     if (!input || !output || !output_length || !attributes_length) {
         return IPP_CODEC_MALFORMED;
     }
-    if (!requested_attributes || !*requested_attributes ||
-        csv_contains(requested_attributes, "all", 3)) {
-        byte_buffer_t copy = {0};
-        if (!append(&copy, input, input_length)) {
-            return IPP_CODEC_NO_MEMORY;
-        }
-        ipp_request_info_t ignored;
-        ipp_codec_result_t inspected = ipp_codec_inspect_request(
-            input, input_length, &ignored);
-        if (inspected != IPP_CODEC_OK) {
-            free(copy.data);
-            return inspected;
-        }
-        *output = copy.data;
-        *output_length = copy.length;
-        *attributes_length = ignored.attributes_length;
-        return IPP_CODEC_OK;
+    if (response_kind != IPP_RESPONSE_KIND_PRINTER &&
+        response_kind != IPP_RESPONSE_KIND_JOB) {
+        return IPP_CODEC_MALFORMED;
     }
     if (input_length < IPP_HEADER_LENGTH) {
         return IPP_CODEC_INCOMPLETE;
@@ -1166,6 +1295,13 @@ ipp_codec_result_t ipp_codec_filter_printer_response(
     }
     size_t cursor = IPP_HEADER_LENGTH;
     uint8_t current_group = 0;
+    uint8_t filtered_group = response_kind == IPP_RESPONSE_KIND_PRINTER ?
+                                 IPP_TAG_PRINTER_ATTRIBUTES :
+                                 IPP_TAG_JOB_ATTRIBUTES;
+    requested_group_mask_t requested_groups =
+        requested_group_mask(requested_attributes);
+    bool request_all = !requested_attributes || !*requested_attributes ||
+                       csv_contains(requested_attributes, "all", 3);
     char current_name[IPP_NAME_MAX + 1] = {0};
     bool ended = false;
     while (cursor < input_length) {
@@ -1176,7 +1312,7 @@ ipp_codec_result_t ipp_codec_filter_printer_response(
                 free(result.data);
                 return IPP_CODEC_NO_MEMORY;
             }
-            *attributes_length = cursor;
+            *attributes_length = result.length;
             ended = true;
             break;
         }
@@ -1215,9 +1351,13 @@ ipp_codec_result_t ipp_codec_filter_printer_response(
             return IPP_CODEC_INCOMPLETE;
         }
         cursor += value_length;
-        bool include = current_group != IPP_TAG_PRINTER_ATTRIBUTES ||
+        requested_group_mask_t attribute_group =
+            classify_response_attribute(current_group, current_name);
+        bool include = current_group != filtered_group ||
                        csv_contains(requested_attributes, current_name,
-                                    strlen(current_name));
+                                    strlen(current_name)) ||
+                       (request_all && attribute_group != 0) ||
+                       (attribute_group & requested_groups) != 0;
         if (include && !append(&result, input + record_start,
                                cursor - record_start)) {
             free(result.data);
@@ -1236,6 +1376,15 @@ ipp_codec_result_t ipp_codec_filter_printer_response(
     *output = result.data;
     *output_length = result.length;
     return IPP_CODEC_OK;
+}
+
+ipp_codec_result_t ipp_codec_filter_printer_response(
+    const uint8_t *input, size_t input_length, const char *requested_attributes,
+    uint8_t **output, size_t *output_length, size_t *attributes_length)
+{
+    return ipp_codec_filter_response(
+        input, input_length, IPP_RESPONSE_KIND_PRINTER, requested_attributes,
+        output, output_length, attributes_length);
 }
 
 ipp_codec_result_t ipp_codec_build_status_response(

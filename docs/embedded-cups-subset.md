@@ -51,8 +51,15 @@ For successful `Get-Printer-Attributes` responses ESPresso can safely own and no
 
 Explicit `requested-attributes` values are honored after normalization, preventing a
 legacy-safe upstream `all` query from leaking unrequested attributes back to the
-client. The first two operation attributes are also validated in their RFC-required
-charset/language order.
+client. RFC `printer-description` and `job-template` selectors expand to their
+defined sets; exact names, unions, duplicate values, unknown selectors and `all` are
+handled without dropping required operation attributes or splitting collections.
+As in CUPS, `media-col-database` is excluded from implicit/`all` and group requests
+unless the client explicitly names it, avoiding an unexpectedly large capability
+response. Upstream defaults remain relayed rather than fabricated.
+The classifier distinguishes Printer Description, Job Description and Job Template
+attributes so it can also be reused when job-response filtering is added. The first
+two operation attributes are validated in their RFC-required charset/language order.
 
 Jobs, unrecognized media collections, margins, finishings and vendor attributes are
 forwarded from the old printer. Live state is forwarded and cached for DNS-SD/UI use;

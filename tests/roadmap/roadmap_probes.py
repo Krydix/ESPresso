@@ -86,7 +86,7 @@ def main() -> None:
         probes = [
             ("incoming-chunked-http",
              lambda: chunked_request_is_supported(request_message([])), False),
-            ("requested-attribute-groups", requested_group_is_supported, False),
+            ("requested-attribute-groups", requested_group_is_supported, True),
             ("format-specific-capabilities", conditional_profiles_are_supported,
              True),
         ]

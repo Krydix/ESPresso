@@ -131,12 +131,14 @@
     {
       "id": "requested-attribute-groups",
       "title": "RFC requested-attributes group keywords expand to their defined attribute sets",
-      "status": "expected-fail",
+      "status": "supported",
       "phase": 2,
-      "plannedTarget": "make test-requested-attribute-groups",
-      "acceptance": [
-        "printer-description and job-template selectors return the RFC-defined sets",
-        "Exact names, all, and multiple values remain supported"
+      "target": "make test && make test-compat && make test-roadmap",
+      "evidence": [
+        "main/ipp_codec.c",
+        "tests/test_ipp_codec.c",
+        "tests/compat/requested-attributes.test",
+        "tests/roadmap/roadmap_probes.py"
       ]
     },
     {

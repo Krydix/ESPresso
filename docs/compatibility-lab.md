@@ -42,7 +42,9 @@ For each JSON fixture the lab:
    unknown-job errors, the supported job lifecycle, and local error responses;
 7. verifies small and 1 MiB URF documents arrive byte-for-byte unchanged;
 8. runs selected RFC 8011 malformed-request tests; and
-9. requires the stock CUPS `get-printer-attributes.test` to accept the facade;
+9. requires the stock CUPS `get-printer-attributes.test`,
+   `get-printer-description-attributes.test`, and
+   `get-job-template-attributes.test` suites to accept the facade;
 10. executes the same transport-independent request policy and short-I/O stream pump
     compiled into the firmware; and
 11. gates the complete CUPS IPP/1.1 suite.
@@ -59,8 +61,8 @@ Supported entries name their executable evidence. Expected failures name their f
 target and acceptance criteria.
 
 `make test-roadmap` executes the nearest expected-red behavior while keeping the main
-CI result green: incoming chunked client requests and RFC requested-attribute group
-selectors must still fail in their known way, while format-conditioned media queries
+CI result green: incoming chunked client requests must still fail in their known way,
+while format-conditioned media queries and RFC requested-attribute group selectors
 must pass. An unexpected pass or regression fails the runner so the matrix cannot
 silently become stale.
 

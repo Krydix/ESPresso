@@ -13,6 +13,11 @@ typedef enum {
     IPP_CODEC_NO_MEMORY,
 } ipp_codec_result_t;
 
+typedef enum {
+    IPP_RESPONSE_KIND_PRINTER = 0,
+    IPP_RESPONSE_KIND_JOB,
+} ipp_response_kind_t;
+
 enum {
     IPP_OPERATION_PRINT_JOB = 0x0002,
     IPP_OPERATION_VALIDATE_JOB = 0x0004,
@@ -127,7 +132,23 @@ ipp_codec_result_t ipp_codec_normalize_printer_response(
     size_t *output_length,
     size_t *attributes_length);
 
-/* Honor a client's explicit requested-attributes list after normalization. */
+/*
+ * Honor requested-attributes for the selected response object. Operation and
+ * unsupported-attributes groups are preserved. This is shared by printer
+ * filtering now and future job response filtering. Before filtering Get-Jobs,
+ * callers must expand its omitted-selector default to "job-uri,job-id"; an
+ * omitted selector passed here means the normal "all" default.
+ */
+ipp_codec_result_t ipp_codec_filter_response(
+    const uint8_t *input,
+    size_t input_length,
+    ipp_response_kind_t response_kind,
+    const char *requested_attributes,
+    uint8_t **output,
+    size_t *output_length,
+    size_t *attributes_length);
+
+/* Compatibility wrapper for Get-Printer-Attributes response filtering. */
 ipp_codec_result_t ipp_codec_filter_printer_response(
     const uint8_t *input,
     size_t input_length,

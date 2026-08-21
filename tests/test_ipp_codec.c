@@ -32,7 +32,9 @@ static size_t add_attribute(uint8_t *message, size_t cursor, uint8_t tag,
     cursor += name_length;
     message[cursor++] = (uint8_t)(value_length >> 8);
     message[cursor++] = (uint8_t)value_length;
-    memcpy(message + cursor, value, value_length);
+    if (value_length) {
+        memcpy(message + cursor, value, value_length);
+    }
     return cursor + value_length;
 }
 
@@ -50,6 +52,20 @@ static size_t add_raw_attribute(uint8_t *message, size_t cursor, uint8_t tag,
     message[cursor++] = (uint8_t)value_length;
     memcpy(message + cursor, value, value_length);
     return cursor + value_length;
+}
+
+static uint8_t *filter_response(const uint8_t *message, size_t length,
+                                ipp_response_kind_t response_kind,
+                                const char *requested_attributes,
+                                size_t *filtered_length)
+{
+    uint8_t *filtered = NULL;
+    size_t attributes_length = 0;
+    assert(ipp_codec_filter_response(
+               message, length, response_kind, requested_attributes, &filtered,
+               filtered_length, &attributes_length) == IPP_CODEC_OK);
+    assert(attributes_length <= *filtered_length);
+    return filtered;
 }
 
 static void test_rewrites_printer_uri_and_preserves_document(void)
@@ -242,6 +258,222 @@ static void test_filters_unrequested_printer_attributes(void)
     free(filtered);
 }
 
+static void test_expands_requested_printer_attribute_groups(void)
+{
+    uint8_t message[2048] = {2, 0, 0, 0, 0, 0, 0, 18, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    message[length++] = 4;
+    length = add_attribute(message, length, 0x45,
+                           "printer-uri-supported",
+                           "ipp://espresso.local/ipp/print");
+    length = add_attribute(message, length, 0x42, "printer-name", "ESPresso");
+    const uint8_t printer_state[] = {0, 0, 0, 3};
+    length = add_raw_attribute(message, length, 0x23, "printer-state",
+                               printer_state, sizeof(printer_state));
+    const uint8_t copies[] = {0, 0, 0, 1, 0, 0, 0, 99};
+    length = add_raw_attribute(message, length, 0x33, "copies-supported",
+                               copies, sizeof(copies));
+    length = add_attribute(message, length, 0x44, "sides-supported",
+                           "one-sided");
+    length = add_attribute(message, length, 0x44, "",
+                           "two-sided-long-edge");
+    length = add_raw_attribute(message, length, 0x34, "media-col-default",
+                               NULL, 0);
+    length = add_attribute(message, length, 0x4a, "", "media-size");
+    length = add_raw_attribute(message, length, 0x34, "", NULL, 0);
+    length = add_attribute(message, length, 0x4a, "", "x-dimension");
+    const uint8_t x_dimension[] = {0, 0, 0x52, 0x08};
+    length = add_raw_attribute(message, length, 0x21, "", x_dimension,
+                               sizeof(x_dimension));
+    length = add_raw_attribute(message, length, 0x37, "", NULL, 0);
+    length = add_raw_attribute(message, length, 0x37, "", NULL, 0);
+    length = add_raw_attribute(message, length, 0x34, "media-col-database",
+                               NULL, 0);
+    length = add_attribute(message, length, 0x4a, "", "media-size-name");
+    length = add_attribute(message, length, 0x44, "", "iso_a4_210x297mm");
+    length = add_raw_attribute(message, length, 0x37, "", NULL, 0);
+    length = add_attribute(message, length, 0x44, "print-color-mode-default",
+                           "color");
+    const uint8_t page_ranges[] = {1};
+    length = add_raw_attribute(message, length, 0x22, "page-ranges-supported",
+                               page_ranges, sizeof(page_ranges));
+    length = add_raw_attribute(message, length, 0x22, "pages-ranges-supported",
+                               page_ranges, sizeof(page_ranges));
+    message[length++] = 3;
+
+    size_t filtered_length = 0;
+    uint8_t *filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER, "printer-description",
+        &filtered_length);
+    assert(contains(filtered, filtered_length, "attributes-charset"));
+    assert(contains(filtered, filtered_length, "attributes-natural-language"));
+    assert(contains(filtered, filtered_length, "printer-uri-supported"));
+    assert(contains(filtered, filtered_length, "printer-name"));
+    assert(contains(filtered, filtered_length, "printer-state"));
+    assert(!contains(filtered, filtered_length, "copies-supported"));
+    assert(!contains(filtered, filtered_length, "sides-supported"));
+    assert(!contains(filtered, filtered_length, "media-col-default"));
+    assert(!contains(filtered, filtered_length, "media-col-database"));
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_PRINTER,
+                               "job-template", &filtered_length);
+    assert(!contains(filtered, filtered_length, "printer-name"));
+    assert(!contains(filtered, filtered_length, "printer-state"));
+    assert(contains(filtered, filtered_length, "copies-supported"));
+    assert(contains(filtered, filtered_length, "sides-supported"));
+    assert(contains(filtered, filtered_length, "two-sided-long-edge"));
+    assert(contains(filtered, filtered_length, "media-col-default"));
+    assert(!contains(filtered, filtered_length, "media-col-database"));
+    assert(contains(filtered, filtered_length, "media-size"));
+    assert(contains(filtered, filtered_length, "x-dimension"));
+    assert(contains(filtered, filtered_length, "print-color-mode-default"));
+    assert(contains(filtered, filtered_length, "page-ranges-supported"));
+    assert(contains(filtered, filtered_length, "pages-ranges-supported"));
+    free(filtered);
+
+    filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER,
+        "printer-description,job-template", &filtered_length);
+    assert(contains(filtered, filtered_length, "printer-name"));
+    assert(contains(filtered, filtered_length, "copies-supported"));
+    assert(contains(filtered, filtered_length, "media-col-default"));
+    assert(!contains(filtered, filtered_length, "media-col-database"));
+    free(filtered);
+
+    filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER,
+        "printer-description,copies-supported", &filtered_length);
+    assert(contains(filtered, filtered_length, "printer-name"));
+    assert(contains(filtered, filtered_length, "copies-supported"));
+    assert(!contains(filtered, filtered_length, "sides-supported"));
+    free(filtered);
+
+    filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER, "media-col-database",
+        &filtered_length);
+    assert(contains(filtered, filtered_length, "media-col-database"));
+    assert(contains(filtered, filtered_length, "iso_a4_210x297mm"));
+    assert(!contains(filtered, filtered_length, "media-col-default"));
+    assert(!contains(filtered, filtered_length, "printer-name"));
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_PRINTER,
+                               "unknown-selector", &filtered_length);
+    assert(contains(filtered, filtered_length, "attributes-charset"));
+    assert(!contains(filtered, filtered_length, "printer-name"));
+    assert(!contains(filtered, filtered_length, "copies-supported"));
+    free(filtered);
+
+    filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER,
+        "job-template,job-template,sides-supported", &filtered_length);
+    assert(contains(filtered, filtered_length, "copies-supported"));
+    assert(contains(filtered, filtered_length, "two-sided-long-edge"));
+    assert(!contains(filtered, filtered_length, "printer-name"));
+    size_t deduplicated_length = 0;
+    uint8_t *deduplicated = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER, "job-template",
+        &deduplicated_length);
+    assert(filtered_length == deduplicated_length);
+    assert(memcmp(filtered, deduplicated, filtered_length) == 0);
+    free(deduplicated);
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_PRINTER,
+                               "all", &filtered_length);
+    assert(contains(filtered, filtered_length, "printer-name"));
+    assert(contains(filtered, filtered_length, "media-col-default"));
+    assert(!contains(filtered, filtered_length, "media-col-database"));
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_PRINTER,
+                               "", &filtered_length);
+    assert(contains(filtered, filtered_length, "printer-name"));
+    assert(!contains(filtered, filtered_length, "media-col-database"));
+    free(filtered);
+
+    filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_PRINTER,
+        "all,media-col-database", &filtered_length);
+    assert(filtered_length == length);
+    assert(memcmp(filtered, message, length) == 0);
+    free(filtered);
+}
+
+static void test_keeps_job_description_and_printer_description_distinct(void)
+{
+    uint8_t message[1024] = {2, 0, 0, 0, 0, 0, 0, 19, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    message[length++] = 2;
+    length = add_attribute(message, length, 0x45, "job-uri",
+                           "ipp://espresso.local/jobs/7");
+    const uint8_t job_id[] = {0, 0, 0, 7};
+    length = add_raw_attribute(message, length, 0x21, "job-id", job_id,
+                               sizeof(job_id));
+    const uint8_t copies[] = {0, 0, 0, 2};
+    length = add_raw_attribute(message, length, 0x21, "copies", copies,
+                               sizeof(copies));
+    length = add_attribute(message, length, 0x44, "sides",
+                           "two-sided-long-edge");
+    message[length++] = 3;
+
+    size_t filtered_length = 0;
+    uint8_t *filtered = filter_response(
+        message, length, IPP_RESPONSE_KIND_JOB, "job-description",
+        &filtered_length);
+    assert(contains(filtered, filtered_length, "job-uri"));
+    assert(contains(filtered, filtered_length, "job-id"));
+    assert(!contains(filtered, filtered_length, "copies"));
+    assert(!contains(filtered, filtered_length, "two-sided-long-edge"));
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_JOB,
+                               "job-template", &filtered_length);
+    assert(!contains(filtered, filtered_length, "job-uri"));
+    assert(!contains(filtered, filtered_length, "job-id"));
+    assert(contains(filtered, filtered_length, "copies"));
+    assert(contains(filtered, filtered_length, "two-sided-long-edge"));
+    free(filtered);
+
+    filtered = filter_response(message, length, IPP_RESPONSE_KIND_JOB,
+                               "printer-description", &filtered_length);
+    assert(!contains(filtered, filtered_length, "job-uri"));
+    assert(!contains(filtered, filtered_length, "copies"));
+    free(filtered);
+}
+
+static void test_inspects_setof_requested_attribute_selectors(void)
+{
+    uint8_t message[512] = {2, 0, 0, 11, 0, 0, 0, 20, 1};
+    size_t length = 9;
+    length = add_attribute(message, length, 0x47,
+                           "attributes-charset", "utf-8");
+    length = add_attribute(message, length, 0x48,
+                           "attributes-natural-language", "en");
+    length = add_attribute(message, length, 0x45, "printer-uri",
+                           "ipp://espresso.local/ipp/print");
+    length = add_attribute(message, length, 0x44, "requested-attributes",
+                           "printer-description");
+    length = add_attribute(message, length, 0x44, "", "job-template");
+    length = add_attribute(message, length, 0x44, "", "job-template");
+    length = add_attribute(message, length, 0x44, "", "printer-state");
+    message[length++] = 3;
+
+    ipp_request_info_t info;
+    assert(ipp_codec_inspect_request(message, length, &info) == IPP_CODEC_OK);
+    assert(strcmp(info.requested_attributes,
+                  "printer-description,job-template,printer-state") == 0);
+}
+
 static void test_inspects_print_job_document(void)
 {
     uint8_t message[256] = {2, 0, 0, 2, 0, 0, 0, 91, 1};
@@ -382,6 +614,9 @@ int main(void)
     test_inspects_print_job_document();
     test_detects_wrong_operation_attribute_order();
     test_filters_unrequested_printer_attributes();
+    test_expands_requested_printer_attribute_groups();
+    test_keeps_job_description_and_printer_description_distinct();
+    test_inspects_setof_requested_attribute_selectors();
     test_builds_parseable_ipp_error();
     test_filters_operations_and_formats();
     test_extracts_relayable_capability_profile();

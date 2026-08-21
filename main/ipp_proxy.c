@@ -411,8 +411,7 @@ static esp_err_t proxy_handler(httpd_req_t *request)
             response_body, response_length, local_printer_uri, local_authority,
             local_uuid, &target, &client_response, &client_response_length,
             &attributes_length);
-        if (codec_result == IPP_CODEC_OK &&
-            request_info.requested_attributes[0]) {
+        if (codec_result == IPP_CODEC_OK) {
             uint8_t *filtered = NULL;
             size_t filtered_length = 0;
             codec_result = ipp_codec_filter_printer_response(

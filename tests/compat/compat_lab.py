@@ -379,6 +379,8 @@ class LabState:
                                       value))
             attrs.append(ipp_attr(0x33, "copies-supported",
                                   struct.pack("!II", 1, spec.get("copies", 99))))
+            attrs.append(ipp_integer(0x21, "copies-default",
+                                     spec.get("copiesDefault", 1)))
             for index, value in enumerate(spec.get("operations", [2, 4, 5, 6, 8, 9, 10, 11])):
                 attrs.append(ipp_integer(0x23,
                                          "operations-supported" if index == 0 else None,
@@ -680,6 +682,10 @@ def validate_fixture(root: Path, library: Path, fixture_path: Path):
                 ["cups-config", "--datadir"], text=True).strip())
             run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
                         cups_data / "ipptool/get-printer-attributes.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        cups_data / "ipptool/get-printer-description-attributes.test")
+            run_ipptool(root, "ipp://127.0.0.1:18631/ipp/print",
+                        cups_data / "ipptool/get-job-template-attributes.test")
             document = (root / "tests/minimal.urf").read_bytes()
             if not state.captured_documents or document not in state.captured_documents:
                 raise AssertionError(f"{fixture_path.stem}: document bytes changed in relay")
